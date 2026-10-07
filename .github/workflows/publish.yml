@@ -47,4 +47,10 @@ jobs:
           grep -q "sandbox session ready" "$smoke_err" || { cat "$smoke_err" >&2; exit 1; }
           ! grep -q "sk_test_smoke" "$smoke_err"
           cd "$GITHUB_WORKSPACE"
-      - run: npm publish --access public
+      # Staged publish: the registry refuses OIDC-creating a brand-new package
+      # without a pre-registered trusted publisher, and the publisher can only be
+      # attached to an existing package. `npm stage publish` creates the package as
+      # a staged version for owner approval in the npm UI — no tokens anywhere.
+      # Once the package exists and its trusted publisher is registered, this
+      # becomes a plain `npm publish`.
+      - run: npm stage publish --access public
