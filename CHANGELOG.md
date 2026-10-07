@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-07
+
+- feat(mcp): trusted publisher зарегистрирован (Paymos-labs/mcp + publish.yml) — возврат на обычный npm publish, контрольный релиз валидирует TP по OIDC
+
 ## [1.0.2] - 2026-10-07
 
 - fix(mcp): первый релиз через npm stage publish — registry не создаёт новый пакет по голому OIDC без TP, staged-флоу с approve владельца остаётся безтокенным
