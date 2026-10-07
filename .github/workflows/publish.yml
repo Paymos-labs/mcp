@@ -1,0 +1,50 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Verify immutable release version
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(node -p 'require("./package.json").version')"
+          test "$actual" = "$expected"
+      - run: npm ci
+      # Runtime deps only: the dev toolchain never ships in the tarball (vitest 5's
+      # rolldown bindings also break under npm ci); consumers get the runtime tree.
+      - run: npm audit --omit=dev --audit-level=high
+      - name: Test packed bin starts and keeps the secret out of output
+        run: |
+          mkdir -p /tmp/paymos-package /tmp/paymos-consumer
+          npm pack --pack-destination /tmp/paymos-package
+          cd /tmp/paymos-consumer
+          npm init -y >/dev/null
+          npm install /tmp/paymos-package/paymos-mcp-*.tgz >/dev/null
+          smoke_err="$(mktemp)"
+          PAYMOS_API_KEY_ID=pk_test_smoke PAYMOS_API_SECRET=sk_test_smoke \
+            npx --no-install paymos-mcp </dev/null 2>"$smoke_err"
+          grep -q "sandbox session ready" "$smoke_err" || { cat "$smoke_err" >&2; exit 1; }
+          ! grep -q "sk_test_smoke" "$smoke_err"
+          cd "$GITHUB_WORKSPACE"
+      - run: npm publish --access public
