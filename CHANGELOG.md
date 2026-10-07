@@ -1,0 +1,17 @@
+# Changelog
+
+## [Unreleased]
+
+## [1.0.0] - 2026-09-28
+
+- Initial release: local stdio MCP server for the Paymos Merchant API.
+- Six tools with frozen public contracts: `create_invoice`, `get_invoice`,
+  `list_invoices`, `cancel_invoice`, `simulate_invoice_payment`,
+  `verify_webhook_signature`.
+- Structural sandbox gate: test key pairs (`pk_test_`/`sk_test_`) only; live
+  (`pk_live_`/`sk_live_`) and payout (`rk_`) keys refused at startup and on every
+  call with `paymos/sandbox-only`.
+- Five doc resources generated from the Paymos docs corpus at build time:
+  quick-start, hosted-checkout, webhooks, testing-sandbox, server-sdks.
+- Credentials via `PAYMOS_API_KEY_ID`/`PAYMOS_API_SECRET` env (flags
+  `--api-key-id`/`--api-secret` as fallback); optional `PAYMOS_WEBHOOK_SECRET`.

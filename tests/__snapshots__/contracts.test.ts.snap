@@ -1,0 +1,229 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`tool contract freeze > freezes names, descriptions and input schemas 1`] = `
+[
+  {
+    "description": "Cancel an invoice that has not been paid yet; the reason is stored on the record. Invoices in a final status (paid, paid_over, underpaid, expired, cancelled) cannot be cancelled. Returns the invoice in wire form: invoice_id, status, payment_url, order, payment (expected, address, transfers), expires_at. status: awaiting_client | awaiting_payment | confirming | underpaid_waiting | paid | paid_over | underpaid | expired | cancelled.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "invoice_id": {
+          "description": "Invoice identifier (inv_…)",
+          "minLength": 1,
+          "type": "string",
+        },
+        "reason": {
+          "description": "Why the invoice is cancelled (1–500 chars, stored)",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "invoice_id",
+        "reason",
+      ],
+      "type": "object",
+    },
+    "name": "cancel_invoice",
+  },
+  {
+    "description": "Create a Paymos invoice and get a hosted payment_url the customer opens. Idempotent per project: reuse the same external_order_id and you get the existing invoice back instead of a duplicate. Returns the invoice in wire form: invoice_id, status, payment_url, order, payment (expected, address, transfers), expires_at. status: awaiting_client | awaiting_payment | confirming | underpaid_waiting | paid | paid_over | underpaid | expired | cancelled.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "allow_multiple_payments": {
+          "description": "Allow the customer to pay an invoice in several transfers (default true)",
+          "type": "boolean",
+        },
+        "amount": {
+          "description": "Decimal string, e.g. "50.00" — amounts are strings, never floats",
+          "minLength": 1,
+          "type": "string",
+        },
+        "client_id": {
+          "description": "Your customer reference (≤200 chars)",
+          "maxLength": 200,
+          "type": "string",
+        },
+        "currency": {
+          "description": "Fiat code (USD, EUR…) or stablecoin symbol (USDT, USDC…)",
+          "minLength": 2,
+          "type": "string",
+        },
+        "customer_fee_percent": {
+          "description": "0–100 service fee percent charged to the customer; overrides the project setting",
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "external_order_id": {
+          "description": "Your order identifier (≤128 chars); idempotency key per project",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string",
+        },
+        "network": {
+          "description": "Locks the crypto invoice to one network: TRC20, ERC20, BEP20, POLYGON, ARBITRUM, OPTIMISM, BASE, TON, AVAX, SOL, NEAR, SUI, PLASMA. Omit to let the customer choose on the payment page",
+          "type": "string",
+        },
+        "project_id": {
+          "description": "Project receiving the invoice (prj_…)",
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "project_id",
+        "amount",
+        "currency",
+        "external_order_id",
+      ],
+      "type": "object",
+    },
+    "name": "create_invoice",
+  },
+  {
+    "description": "Fetch the current state of one Paymos invoice by invoice_id. Returns the invoice in wire form: invoice_id, status, payment_url, order, payment (expected, address, transfers), expires_at. status: awaiting_client | awaiting_payment | confirming | underpaid_waiting | paid | paid_over | underpaid | expired | cancelled.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "invoice_id": {
+          "description": "Invoice identifier (inv_…)",
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "invoice_id",
+      ],
+      "type": "object",
+    },
+    "name": "get_invoice",
+  },
+  {
+    "description": "Read one cursor-paginated page of invoices for a project. Filters: status (repeatable), external_order_id, created_from/created_to (Unix seconds). The result carries items[] and next_cursor — next_cursor is absent on the last page. Poll with the returned cursor; do not guess offsets.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "created_from": {
+          "description": "Unix seconds, inclusive lower bound",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer",
+        },
+        "created_to": {
+          "description": "Unix seconds, inclusive upper bound",
+          "maximum": 9007199254740991,
+          "minimum": -9007199254740991,
+          "type": "integer",
+        },
+        "cursor": {
+          "description": "Cursor from a previous list_invoices response",
+          "type": "string",
+        },
+        "external_order_id": {
+          "description": "Filter by your order identifier",
+          "type": "string",
+        },
+        "limit": {
+          "description": "Page size; the server default and maximum apply",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991,
+          "type": "integer",
+        },
+        "project_id": {
+          "description": "Project whose invoices to list (prj_…)",
+          "minLength": 1,
+          "type": "string",
+        },
+        "status": {
+          "description": "Repeatable status filter: awaiting_client | awaiting_payment | confirming | underpaid_waiting | paid | paid_over | underpaid | expired | cancelled",
+          "items": {
+            "enum": [
+              "awaiting_client",
+              "awaiting_payment",
+              "confirming",
+              "underpaid_waiting",
+              "paid",
+              "paid_over",
+              "underpaid",
+              "expired",
+              "cancelled",
+            ],
+            "type": "string",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "project_id",
+      ],
+      "type": "object",
+    },
+    "name": "list_invoices",
+  },
+  {
+    "description": "Sandbox only: drive a test invoice through a payment outcome without touching a blockchain. The server derives the amounts — never compute money client-side. stage=paid marks it fully paid; overpaid pays more than expected; underpay pays less (invoice lands in underpaid waiting for a top-up); cancel voids it. Returns the invoice in wire form: invoice_id, status, payment_url, order, payment (expected, address, transfers), expires_at. status: awaiting_client | awaiting_payment | confirming | underpaid_waiting | paid | paid_over | underpaid | expired | cancelled.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "invoice_id": {
+          "description": "Test invoice identifier (is_test=true)",
+          "minLength": 1,
+          "type": "string",
+        },
+        "stage": {
+          "description": "Outcome to simulate: paid | overpaid | underpay | cancel",
+          "enum": [
+            "paid",
+            "overpaid",
+            "underpay",
+            "cancel",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "invoice_id",
+        "stage",
+      ],
+      "type": "object",
+    },
+    "name": "simulate_invoice_payment",
+  },
+  {
+    "description": "Verify the X-Webhook-Signature header of a Paymos webhook against its raw body, locally (no API call). Header format: t={unix},v1={hmac_hex("{unix}.{payload}")}; during secret rotation two v1= values are present and either may match. Use the raw request body byte-for-byte — re-serialized JSON breaks the signature.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "payload": {
+          "description": "The raw webhook body exactly as received",
+          "minLength": 1,
+          "type": "string",
+        },
+        "secret": {
+          "description": "Webhook secret (whsec_…); defaults to PAYMOS_WEBHOOK_SECRET",
+          "type": "string",
+        },
+        "signature_header": {
+          "description": "The X-Webhook-Signature header value, e.g. t=1760000000,v1=9f2c…",
+          "type": "string",
+        },
+        "tolerance_seconds": {
+          "description": "Max age of the t= timestamp (default 300); older headers are rejected as expired",
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "payload",
+        "signature_header",
+      ],
+      "type": "object",
+    },
+    "name": "verify_webhook_signature",
+  },
+]
+`;
