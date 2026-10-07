@@ -1,6 +1,6 @@
 {
   "name": "@paymos/mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Official Paymos MCP server: a local stdio server that lets coding agents (Claude Code, Cursor, custom LLM bots) build and verify a merchant integration against the Paymos sandbox without reading docs.",
   "keywords": [
     "paymos",

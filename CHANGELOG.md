@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-07
+
+- fix(mcp): lock пересобран из registry (@paymos/sdk 2.1.1) — в lock осталась файловая ссылка resolved:../typescript-sdk с восстановления, из-за неё tsc в CI-зеркале не находил SDK (v1.0.0 тег опубликован с битым билдом, рабочий релиз — v1.0.1)
+
 ## [1.0.0] - 2026-09-28
 
 - Initial release: local stdio MCP server for the Paymos Merchant API.
