@@ -7,6 +7,8 @@ import { loadCredentials, parseFlags } from "./config.js";
 import { PaymosGateway } from "./gateway.js";
 import { startupLine } from "./gate.js";
 import { buildServer } from "./server.js";
+import { runSetup } from "./setup.js";
+import { SETUP_COPY } from "./setup-copy.js";
 
 /**
  * Stdio entry point. On a credential failure the server still starts (so the
@@ -18,6 +20,14 @@ export async function main(
   env: Readonly<Record<string, string | undefined>> = process.env,
   argv: readonly string[] = process.argv.slice(2),
 ): Promise<void> {
+  if (argv[0] === "setup") {
+    await runSetup(argv.slice(1), env);
+    return;
+  }
+  if (argv[0] === "--help" || argv[0] === "-h") {
+    console.log(SETUP_COPY.help);
+    return;
+  }
   const credentials = loadCredentials(env, parseFlags(argv));
   const gateway = new PaymosGateway(credentials);
   console.error(startupLine(gateway.check(), credentials.apiKeyId));

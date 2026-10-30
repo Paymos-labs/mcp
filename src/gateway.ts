@@ -6,13 +6,20 @@
  * the structure, not of each caller's discipline.
  */
 
-import { Paymos } from "@paymos/sdk";
+import { Paymos, type Invoice } from "@paymos/sdk";
 import type { PaymosMcpCredentials } from "./config.js";
 import { checkCredentials } from "./gate.js";
 import { ToolError } from "./errors.js";
 
-/** The invoices surface of the SDK client (`Paymos["invoices"]`). */
-export type InvoicesSurface = Paymos["invoices"];
+/**
+ * SDK 2.1.1 already forwards the simulator stage unchanged, but its declarations
+ * predate the additive paid_late stage. Keep that wire contract explicit here
+ * until the SDK declaration catches up. The packed-package test checks the
+ * actual published runtime; no second HTTP/signing implementation is introduced.
+ */
+export type InvoicesSurface = Omit<Paymos["invoices"], "simulatePayment"> & {
+  simulatePayment(invoiceId: string, stage: "paid" | "overpaid" | "underpay" | "cancel" | "paid_late"): Promise<Invoice>;
+};
 
 /** Test seam: injects a fetch mock without weakening the gate. */
 export interface GatewayOverrides {

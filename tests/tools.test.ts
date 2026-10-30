@@ -165,6 +165,31 @@ describe("invoice tools over a mocked SDK transport", () => {
     expect(JSON.parse(String(init.body))).toEqual({ stage: "paid" });
   });
 
+  it("forwards the accepted paid_late stage through the published SDK runtime", async () => {
+    const { gateway, fetchMock } = gatewayWithFetch(() => jsonResponse(200, {
+      ...WIRE_INVOICE, status: "expired", is_final: true, paid_late_at: 1760007200,
+    }));
+    const client = await connect(gateway);
+    const result = await client.callTool({ name: "simulate_invoice_payment", arguments: {
+      invoice_id: "inv_test_9", stage: "paid_late",
+    } });
+    expect(result.isError).not.toBe(true);
+    expect(jsonContent(result)).toMatchObject({ status: "expired", is_final: true, paid_late_at: 1760007200 });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.paymos.io/v1/sandbox/invoices/inv_test_9/simulate-payment");
+    expect(JSON.parse(String(init.body))).toEqual({ stage: "paid_late" });
+  });
+
+  it("rejects an unknown simulator stage without calling the API", async () => {
+    const { gateway, fetchMock } = gatewayWithFetch(() => jsonResponse(200, WIRE_INVOICE));
+    const client = await connect(gateway);
+    const result = await client.callTool({ name: "simulate_invoice_payment", arguments: {
+      invoice_id: "inv_test_9", stage: "invented-stage",
+    } });
+    expect(result.isError).toBe(true);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("maps a validation problem to paymos/<code>", async () => {
     const { gateway } = gatewayWithFetch(() =>
       jsonResponse(400, {

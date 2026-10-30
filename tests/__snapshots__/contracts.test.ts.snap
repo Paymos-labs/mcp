@@ -164,7 +164,7 @@ exports[`tool contract freeze > freezes names, descriptions and input schemas 1`
     "name": "list_invoices",
   },
   {
-    "description": "Sandbox only: drive a test invoice through a payment outcome without touching a blockchain. The server derives the amounts — never compute money client-side. stage=paid marks it fully paid; overpaid pays more than expected; underpay pays less (invoice lands in underpaid waiting for a top-up); cancel voids it. Returns the invoice in wire form: invoice_id, status, payment_url, order, payment (expected, address, transfers), expires_at. status: awaiting_client | awaiting_payment | confirming | underpaid_waiting | paid | paid_over | underpaid | expired | cancelled.",
+    "description": "Sandbox only: drive a test invoice through a payment outcome without touching a blockchain. The server derives the amounts — never compute money client-side. stage=paid marks it fully paid; overpaid pays more than expected; underpay pays less (invoice lands in underpaid waiting for a top-up); cancel voids it; paid_late pays the full amount after the deadline — the invoice keeps its terminal decision and gains the late-payment mark. Returns the invoice in wire form: invoice_id, status, payment_url, order, payment (expected, address, transfers), expires_at. status: awaiting_client | awaiting_payment | confirming | underpaid_waiting | paid | paid_over | underpaid | expired | cancelled.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -174,12 +174,13 @@ exports[`tool contract freeze > freezes names, descriptions and input schemas 1`
           "type": "string",
         },
         "stage": {
-          "description": "Outcome to simulate: paid | overpaid | underpay | cancel",
+          "description": "Outcome to simulate: paid | overpaid | underpay | cancel | paid_late",
           "enum": [
             "paid",
             "overpaid",
             "underpay",
             "cancel",
+            "paid_late",
           ],
           "type": "string",
         },

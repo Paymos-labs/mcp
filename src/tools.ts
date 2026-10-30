@@ -217,13 +217,15 @@ export function registerTools(server: McpServer, gateway: PaymosGateway): void {
         "Sandbox only: drive a test invoice through a payment outcome without touching a "
         + "blockchain. The server derives the amounts — never compute money client-side. "
         + "stage=paid marks it fully paid; overpaid pays more than expected; underpay pays "
-        + "less (invoice lands in underpaid waiting for a top-up); cancel voids it. "
+        + "less (invoice lands in underpaid waiting for a top-up); cancel voids it; paid_late "
+        + "pays the full amount after the deadline — the invoice keeps its terminal decision and "
+        + "gains the late-payment mark. "
         + INVOICE_RESULT_HINT,
       inputSchema: {
         invoice_id: z.string().min(1).describe("Test invoice identifier (is_test=true)"),
         stage: z
-          .enum(["paid", "overpaid", "underpay", "cancel"])
-          .describe("Outcome to simulate: paid | overpaid | underpay | cancel"),
+          .enum(["paid", "overpaid", "underpay", "cancel", "paid_late"])
+          .describe("Outcome to simulate: paid | overpaid | underpay | cancel | paid_late"),
       },
     },
     async ({ invoice_id, stage }) =>
