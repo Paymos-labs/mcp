@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-30
+
+- fix(plugins): reject invalid Woo refund controls and unblock SDK checks
+- feat: deliver local MCP setup and accumulated platform updates
+- feat(invoices): accept full late payments without reopening invoices
+
 ## [1.2.0] - 2026-10-30
 
 - fix(plugins): reject invalid Woo refund controls and unblock SDK checks
