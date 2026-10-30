@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-30
+
+- fix(plugins): reject invalid Woo refund controls and unblock SDK checks
+- feat: deliver local MCP setup and accumulated platform updates
+- feat(invoices): accept full late payments without reopening invoices
+
 ## [1.1.1] - 2026-10-07
 
 - fix(mcp): repository.url/bugs с канон-кейсом Paymos-labs — npm provenance строго мэтчит регистр (E422 на v1.1.0)

@@ -5,6 +5,8 @@
  * wins on conflict, so a flag typo cannot silently override a configured key.
  */
 
+import { readCredentialFile } from "./credential-file.js";
+
 export interface PaymosMcpCredentials {
   readonly apiKeyId: string;
   readonly apiSecret: string;
@@ -42,9 +44,11 @@ export function loadCredentials(
   env: Readonly<Record<string, string | undefined>>,
   flags: CredentialFlags,
 ): PaymosMcpCredentials {
-  const apiKeyId = (env.PAYMOS_API_KEY_ID ?? flags.apiKeyId ?? "").trim();
-  const apiSecret = (env.PAYMOS_API_SECRET ?? flags.apiSecret ?? "").trim();
-  const webhookSecret = (env.PAYMOS_WEBHOOK_SECRET ?? "").trim();
+  const file = env.PAYMOS_CREDENTIALS_FILE === undefined
+    ? undefined : readCredentialFile(env.PAYMOS_CREDENTIALS_FILE);
+  const apiKeyId = (env.PAYMOS_API_KEY_ID ?? flags.apiKeyId ?? file?.apiKeyId ?? "").trim();
+  const apiSecret = (env.PAYMOS_API_SECRET ?? flags.apiSecret ?? file?.apiSecret ?? "").trim();
+  const webhookSecret = (env.PAYMOS_WEBHOOK_SECRET ?? file?.webhookSecret ?? "").trim();
   return webhookSecret === ""
     ? { apiKeyId, apiSecret }
     : { apiKeyId, apiSecret, webhookSecret };

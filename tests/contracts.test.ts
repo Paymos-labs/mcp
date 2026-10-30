@@ -37,7 +37,7 @@ describe("tool contract freeze", () => {
     const simulate = listed.tools.find((tool) => tool.name === "simulate_invoice_payment");
     expect(simulate).toBeDefined();
     const stage = (simulate?.inputSchema as { properties?: Record<string, { enum?: string[] }> }).properties?.stage;
-    expect(stage?.enum).toEqual(["paid", "overpaid", "underpay", "cancel"]);
+    expect(stage?.enum).toEqual(["paid", "overpaid", "underpay", "cancel", "paid_late"]);
   });
 
   it("freezes the gate error codes", async () => {
