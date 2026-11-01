@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-11-01
+
+- refactor(invoices): remove the multiple-payment toggle
+
 ## [1.3.0] - 2026-10-30
 
 - fix(plugins): reject invalid Woo refund controls and unblock SDK checks

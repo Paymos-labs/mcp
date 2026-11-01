@@ -89,10 +89,6 @@ export function registerTools(server: McpServer, gateway: PaymosGateway): void {
           .min(1)
           .max(128)
           .describe("Your order identifier (≤128 chars); idempotency key per project"),
-        allow_multiple_payments: z
-          .boolean()
-          .optional()
-          .describe("Allow the customer to pay an invoice in several transfers (default true)"),
         customer_fee_percent: z
           .number()
           .int()
@@ -113,7 +109,6 @@ export function registerTools(server: McpServer, gateway: PaymosGateway): void {
       currency,
       network,
       external_order_id,
-      allow_multiple_payments,
       customer_fee_percent,
       client_id,
     }) =>
@@ -124,7 +119,6 @@ export function registerTools(server: McpServer, gateway: PaymosGateway): void {
           currency,
           externalOrderId: external_order_id,
           ...(network !== undefined ? { network } : {}),
-          ...(allow_multiple_payments !== undefined ? { allowMultiplePayments: allow_multiple_payments } : {}),
           ...(customer_fee_percent !== undefined ? { customerFeePercent: customer_fee_percent } : {}),
           ...(client_id !== undefined ? { clientId: client_id } : {}),
         });
