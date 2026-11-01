@@ -9,23 +9,32 @@ import { connect, TEST_KEY_ID, TEST_SECRET } from "./helpers.js";
  * major version and keep the old names alive through a deprecation period.
  */
 describe("tool contract freeze", () => {
-  it("exposes exactly the six v1 tools", async () => {
+  it("exposes the six v1 tools and eight payment channel tools", async () => {
     const client = await connect(new PaymosGateway({ apiKeyId: TEST_KEY_ID, apiSecret: TEST_SECRET }));
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name).sort()).toEqual([
       "cancel_invoice",
+      "block_payment_channel",
       "create_invoice",
+      "create_payment_channel",
       "get_invoice",
+      "get_payment_channel",
+      "get_payment_channel_deposit",
       "list_invoices",
+      "list_payment_channel_deposits",
+      "list_payment_channels",
+      "simulate_payment_channel_deposit",
       "simulate_invoice_payment",
+      "unblock_payment_channel",
       "verify_webhook_signature",
-    ]);
+    ].sort());
   });
 
   it("freezes names, descriptions and input schemas", async () => {
     const client = await connect(new PaymosGateway({ apiKeyId: TEST_KEY_ID, apiSecret: TEST_SECRET }));
     const listed = await client.listTools();
     const digest = listed.tools
+      .filter((tool) => ["create_invoice", "get_invoice", "list_invoices", "cancel_invoice", "simulate_invoice_payment", "verify_webhook_signature"].includes(tool.name))
       .map((tool) => ({ name: tool.name, description: tool.description, inputSchema: tool.inputSchema }))
       .sort((left, right) => left.name.localeCompare(right.name));
     expect(digest).toMatchSnapshot();

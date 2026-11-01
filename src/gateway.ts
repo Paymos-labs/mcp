@@ -44,14 +44,25 @@ export class PaymosGateway {
     return this.credentials.webhookSecret;
   }
 
-  invoices(): InvoicesSurface {
+  private client(): Paymos {
     const check = this.check();
     if (!check.ok) throw new ToolError(check.code, check.message);
-    const client = new Paymos({
+    return new Paymos({
       apiKey: this.credentials.apiKeyId,
       apiSecret: this.credentials.apiSecret,
       ...(this.overrides.fetch ? { fetch: this.overrides.fetch } : {}),
     });
-    return client.invoices;
+  }
+
+  invoices(): InvoicesSurface {
+    return this.client().invoices;
+  }
+
+  paymentChannels(): Paymos["paymentChannels"] {
+    return this.client().paymentChannels;
+  }
+
+  paymentChannelDeposits(): Paymos["paymentChannelDeposits"] {
+    return this.client().paymentChannelDeposits;
   }
 }

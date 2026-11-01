@@ -1,5 +1,5 @@
 /**
- * The six v1 tools. Names and schemas are frozen public surface from v1.0.0 —
+ * The v1 tool names and schemas are frozen public surface from v1.0.0 —
  * renaming or reshaping is a major version. Descriptions are written so an
  * agent never needs the external docs. Every API call goes through the
  * gateway; money and identifiers stay strings.
@@ -60,6 +60,137 @@ async function guarded(run: () => Promise<ToolResult>): Promise<ToolResult> {
 }
 
 export function registerTools(server: McpServer, gateway: PaymosGateway): void {
+  server.registerTool(
+    "create_payment_channel",
+    {
+      title: "Create payment channel",
+      description: "Create a Sandbox payment channel using project_id and external_id. Repeating the same pair returns the existing channel.",
+      inputSchema: {
+        project_id: z.string().min(1).describe("Project ID."),
+        external_id: z.string().min(1).max(128).describe("Your identifier for the payer; channel creation is idempotent within the project."),
+      },
+    },
+    async ({ project_id, external_id }) => guarded(async () => {
+      const channel = await gateway.paymentChannels().create({ projectId: project_id, externalId: external_id });
+      return textJson(toWireShape(channel));
+    }),
+  );
+
+  server.registerTool(
+    "get_payment_channel",
+    {
+      title: "Get payment channel",
+      description: "Read a Sandbox payment channel by ID, including its current status and available deposit addresses.",
+      inputSchema: { payment_channel_id: z.string().min(1).describe("Payment channel ID.") },
+    },
+    async ({ payment_channel_id }) => guarded(async () =>
+      textJson(toWireShape(await gateway.paymentChannels().get(payment_channel_id)))),
+  );
+
+  server.registerTool(
+    "list_payment_channels",
+    {
+      title: "List payment channels",
+      description: "List Sandbox payment channels with optional project_id, external_id, and status filters. Use limit and cursor to request one page at a time.",
+      inputSchema: {
+        project_id: z.string().min(1).optional().describe("Project ID."),
+        external_id: z.string().min(1).max(128).optional().describe("Your identifier for the payer; channel creation is idempotent within the project."),
+        status: z.array(z.enum(["active", "blocked", "provisioning"])).optional().describe("Array of channel statuses to include: active, blocked, or provisioning."),
+        limit: z.number().int().min(1).max(100).optional().describe("Maximum number of items to return in this page."),
+        cursor: z.string().optional().describe("Pagination cursor from the previous channel-list response."),
+      },
+    },
+    async ({ project_id, external_id, status, limit, cursor }) => guarded(async () => {
+      const page = await gateway.paymentChannels().list({
+        ...(project_id !== undefined ? { projectId: project_id } : {}),
+        ...(external_id !== undefined ? { externalId: external_id } : {}),
+        ...(status !== undefined ? { status } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      return textJson(toWireShape(page));
+    }),
+  );
+
+  server.registerTool(
+    "block_payment_channel",
+    {
+      title: "Block payment channel",
+      description: "Set a Sandbox payment channel's status to blocked.",
+      inputSchema: { payment_channel_id: z.string().min(1).describe("Payment channel ID.") },
+    },
+    async ({ payment_channel_id }) => guarded(async () =>
+      textJson(toWireShape(await gateway.paymentChannels().block(payment_channel_id)))),
+  );
+
+  server.registerTool(
+    "unblock_payment_channel",
+    {
+      title: "Unblock payment channel",
+      description: "Clear a Sandbox payment channel's blocked status.",
+      inputSchema: { payment_channel_id: z.string().min(1).describe("Payment channel ID.") },
+    },
+    async ({ payment_channel_id }) => guarded(async () =>
+      textJson(toWireShape(await gateway.paymentChannels().unblock(payment_channel_id)))),
+  );
+
+  server.registerTool(
+    "simulate_payment_channel_deposit",
+    {
+      title: "Simulate payment channel deposit",
+      description: "Create a new Sandbox deposit on every call using a channel ID, decimal-string amount, currency, and network. The optional stage accepts confirming, reorged, or confirmed and defaults to confirmed. No real blockchain is called, and no real funds move.",
+      inputSchema: {
+        payment_channel_id: z.string().min(1).describe("Payment channel ID."),
+        amount: z.string().min(1).describe("Deposit amount as a decimal string."),
+        currency: z.string().min(1).describe("Currency symbol for the simulated deposit."),
+        network: z.string().min(1).describe("Network for the simulated deposit."),
+        stage: z.enum(["confirming", "reorged", "confirmed"]).optional().describe("Simulated deposit stage: confirming, reorged, or confirmed. Defaults to confirmed when omitted."),
+      },
+    },
+    async ({ payment_channel_id, amount, currency, network, stage }) => guarded(async () => {
+      const deposit = await gateway.paymentChannels().simulateDeposit(payment_channel_id, {
+        amount, currency, network, ...(stage !== undefined ? { stage } : {}),
+      });
+      return textJson(toWireShape(deposit));
+    }),
+  );
+
+  server.registerTool(
+    "get_payment_channel_deposit",
+    {
+      title: "Get payment channel deposit",
+      description: "Read a Sandbox payment channel deposit by ID at any stage, including confirming, reorged, and confirmed.",
+      inputSchema: { payment_channel_deposit_id: z.string().min(1).describe("Payment channel deposit ID.") },
+    },
+    async ({ payment_channel_deposit_id }) => guarded(async () =>
+      textJson(toWireShape(await gateway.paymentChannelDeposits().get(payment_channel_deposit_id)))),
+  );
+
+  server.registerTool(
+    "list_payment_channel_deposits",
+    {
+      title: "List confirmed channel deposits",
+      description: "Poll confirmed Sandbox deposits, oldest first. Every response includes next_cursor, even on an empty page; save it for the next poll. If the feed stops advancing, the optional blocked field identifies the deposit and explains why.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).optional().describe("Maximum number of items to return in this page."),
+        cursor: z.string().optional().describe("Cursor from the previous response. For the deposit feed, keep it even after an empty page."),
+        project_id: z.string().min(1).optional().describe("Project ID."),
+        payment_channel_id: z.string().min(1).optional().describe("Payment channel ID."),
+        confirmed_from: z.number().int().optional().describe("Inclusive lower bound in Unix seconds for the initial poll. Keep the same value when continuing with a cursor."),
+      },
+    },
+    async ({ limit, cursor, project_id, payment_channel_id, confirmed_from }) => guarded(async () => {
+      const page = await gateway.paymentChannelDeposits().read({
+        ...(limit !== undefined ? { limit } : {}),
+        ...(cursor !== undefined ? { cursor } : {}),
+        ...(project_id !== undefined ? { projectId: project_id } : {}),
+        ...(payment_channel_id !== undefined ? { paymentChannelId: payment_channel_id } : {}),
+        ...(confirmed_from !== undefined ? { confirmedFrom: confirmed_from } : {}),
+      });
+      return textJson(toWireShape(page));
+    }),
+  );
+
   server.registerTool(
     "create_invoice",
     {

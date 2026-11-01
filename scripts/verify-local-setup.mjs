@@ -43,7 +43,7 @@ const clientConfig = join(temp, "client.json");
 const credentialFile = join(temp, "private", "credentials.json");
 const secret = "sk_test_packed_DO_NOT_PRINT";
 const webhookSecret = "whsec_packed_DO_NOT_PRINT";
-const isolatedEnv = { ...process.env, HOME: temp, USERPROFILE: temp,
+const isolatedEnv = { ...process.env, XDG_CONFIG_HOME: join(temp, "config"),
   PAYMOS_API_KEY_ID: "pk_test_packed", PAYMOS_API_SECRET: secret, PAYMOS_WEBHOOK_SECRET: webhookSecret };
 delete isolatedEnv.PAYMOS_CREDENTIALS_FILE;
 for (const args of [["--help"], ["setup", "--help"]]) {
@@ -75,7 +75,7 @@ const client = new Client({ name: "paymos-offline-package-check", version: "1.0.
 try {
   await client.connect(transport);
   const tools = (await client.listTools()).tools.map(tool => tool.name).sort();
-  assert.deepEqual(tools, ["cancel_invoice", "create_invoice", "get_invoice", "list_invoices", "simulate_invoice_payment", "verify_webhook_signature"]);
+  assert.deepEqual(tools, ["block_payment_channel", "cancel_invoice", "create_invoice", "create_payment_channel", "get_invoice", "get_payment_channel", "get_payment_channel_deposit", "list_invoices", "list_payment_channel_deposits", "list_payment_channels", "simulate_invoice_payment", "simulate_payment_channel_deposit", "unblock_payment_channel", "verify_webhook_signature"]);
   assert.equal((await client.listResources()).resources.length, 5);
   const payload = '{"event_id":"evt_local"}';
   const timestamp = Math.floor(Date.now() / 1000);
@@ -89,5 +89,5 @@ try {
 }
 assert.match(stderr, /sandbox session ready/);
 assert(!stderr.includes(secret) && !stderr.includes(webhookSecret));
-console.log(JSON.stringify({ packageSmoke: "pass", tools: 6, resources: 5, privateFile: true,
+console.log(JSON.stringify({ packageSmoke: "pass", tools: 14, resources: 5, privateFile: true,
   installedBinSetup: "pass", configuredLauncher: "pass", repeat: "pass", help: "pass", signatureFromFile: "pass", networkTests: "not run" }));
