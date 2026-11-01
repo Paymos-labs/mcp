@@ -32,10 +32,6 @@ exports[`tool contract freeze > freezes names, descriptions and input schemas 1`
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
-        "allow_multiple_payments": {
-          "description": "Allow the customer to pay an invoice in several transfers (default true)",
-          "type": "boolean",
-        },
         "amount": {
           "description": "Decimal string, e.g. "50.00" — amounts are strings, never floats",
           "minLength": 1,
