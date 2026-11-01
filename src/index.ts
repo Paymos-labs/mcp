@@ -12,8 +12,8 @@ import { SETUP_COPY } from "./setup-copy.js";
 
 /**
  * Stdio entry point. On a credential failure the server still starts (so the
- * MCP client sees the six tools) but every tool call answers with the gate
- * error — no tool runs. Startup lines go to stderr only: stdout is the
+ * MCP client sees the tools) but every API tool call answers with the gate
+ * error — no API call runs. Startup lines go to stderr only: stdout is the
  * JSON-RPC channel, and no line ever contains the secret.
  */
 export async function main(

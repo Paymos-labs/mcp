@@ -2,9 +2,13 @@
 
 Connect your coding agent to the Paymos sandbox through a local MCP server. The agent can create test invoices, simulate payment scenarios, inspect invoice states, and verify webhook signatures while building your application around a Paymos server SDK.
 
-The server runs over stdio. It exposes six tools and five documentation resources and accepts test key pairs only. Live and payout keys are refused.
+The local MCP server connects your coding agent to the Paymos sandbox with 14 tools and five documentation resources for testing merchant integrations.
+
+Use a test Payment key pair. Live and Payout keys are rejected; API requests are signed through the official SDK, and real funds are not involved.
 
 ## Requirements
+
+The MCP package passes tests on Node.js 20, but its SDK dependency officially requires Node.js 22.12 or newer, so npm refuses installation on Node.js 20 when `engine-strict` is enabled.
 
 - Node.js 20 or newer
 - A Paymos merchant account with a test key pair from Dashboard → Developer → API Keys (`pk_test_…` and `sk_test_…`)
@@ -180,6 +184,18 @@ The server still reads `PAYMOS_API_KEY_ID`, `PAYMOS_API_SECRET`, and optional `P
 | `cancel_invoice` | Cancel an unpaid invoice and store the reason |
 | `simulate_invoice_payment` | Simulate `paid`, `paid_late`, `overpaid`, `underpay`, or `cancel` in the sandbox |
 | `verify_webhook_signature` | Verify `X-Webhook-Signature` against the raw webhook body locally |
+| `create_payment_channel` | Create a channel; idempotent per `project_id` and `external_id` |
+| `get_payment_channel` | Read a channel's current status and available deposit addresses |
+| `list_payment_channels` | List one page of channels with filters and a cursor |
+| `block_payment_channel` | Set a payment channel's status to blocked |
+| `unblock_payment_channel` | Clear a payment channel's blocked status |
+| `simulate_payment_channel_deposit` | Simulate a new `confirming`, `reorged`, or `confirmed` deposit |
+| `get_payment_channel_deposit` | Read a deposit at any stage |
+| `list_payment_channel_deposits` | Read one page of confirmed deposits, oldest first |
+
+Each `simulate_payment_channel_deposit` call creates a new test deposit. The deposit feed returns only confirmed deposits. Save `next_cursor` from every response, including empty pages, and use it for the next poll. If the feed stops advancing, check `blocked` for the deposit and reason.
+
+A deposit-feed cursor is valid for 24 hours; keep `confirmed_from` unchanged when continuing with that cursor.
 
 `paid_late` is a simulation scenario, not an invoice status. See the [sandbox documentation](https://paymos.io/docs/testing) for its behavior.
 
