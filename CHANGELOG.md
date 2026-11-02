@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-11-02
+
+- docs: regenerate merged documentation on shared node
+- merge: integrate current main and shared workspace
+- wip: snapshot shared working tree before merging main
+- wip(refunds): merchant refund plugin work (CMS adapters, PHP SDK, tests) - unverified WIP snapshot
+
 ## [1.4.0] - 2026-11-01
 
 - feat(mcp): add sandbox payment channel tools

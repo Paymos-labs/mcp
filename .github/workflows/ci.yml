@@ -17,7 +17,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [20.19.0, 22, 24]
+        include:
+          - node: 20.19.0
+            strict: false
+          - node: 22.12.0
+            strict: true
+          - node: 24
+            strict: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -25,6 +31,26 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm ci
+        env:
+          npm_config_engine_strict: ${{ matrix.strict }}
       - run: npm run build:resources
       - run: npm run check
       - run: npm test
+      - name: Reject unsupported Node with engine-strict
+        if: ${{ matrix.node == '20.19.0' }}
+        shell: bash
+        run: |
+          task_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$task_dir"' EXIT
+          npm pack --ignore-scripts --pack-destination "$task_dir" >/dev/null
+          printf '{"private":true}\n' > "$task_dir/package.json"
+          archives=("$task_dir"/*.tgz)
+          if (cd "$task_dir" && npm install --ignore-scripts --engine-strict --no-audit --no-fund "${archives[0]}" >install.log 2>&1); then
+            echo 'Unsupported Node unexpectedly accepted the package' >&2
+            exit 1
+          fi
+          cat "$task_dir/install.log"
+          grep -F 'EBADENGINE' "$task_dir/install.log"
+          grep -F '@paymos/mcp@' "$task_dir/install.log"
+          grep -F '>=22.12' "$task_dir/install.log"
+          test ! -e "$task_dir/node_modules/@paymos/mcp"
