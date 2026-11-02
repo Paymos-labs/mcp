@@ -8,9 +8,7 @@ Use a test Payment key pair. Live and Payout keys are rejected; API requests are
 
 ## Requirements
 
-The MCP package passes tests on Node.js 20, but its SDK dependency officially requires Node.js 22.12 or newer, so npm refuses installation on Node.js 20 when `engine-strict` is enabled.
-
-- Node.js 20 or newer
+- Requires Node.js 22.12 or later.
 - A Paymos merchant account with a test key pair from Dashboard → Developer → API Keys (`pk_test_…` and `sk_test_…`)
 - An MCP client that can launch a local stdio server
 

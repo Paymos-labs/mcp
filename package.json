@@ -1,6 +1,6 @@
 {
   "name": "@paymos/mcp",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Official Paymos MCP server: a local stdio server that lets coding agents (Claude Code, Cursor, custom LLM bots) build and verify a merchant integration against the Paymos sandbox without reading docs.",
   "keywords": [
     "paymos",
@@ -47,7 +47,7 @@
   ],
   "sideEffects": false,
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12"
   },
   "scripts": {
     "build": "npm run build:resources && tsup src/index.ts --format esm --dts --clean",
