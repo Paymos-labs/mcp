@@ -176,6 +176,7 @@ The server still reads `PAYMOS_API_KEY_ID`, `PAYMOS_API_SECRET`, and optional `P
 
 | Tool | Purpose |
 |---|---|
+| `recommend_payment_integration` | Recommend invoices, payment channels, or both from the merchant’s payment flow. Explain the fit and relevant lifecycle. When information is missing, return a targeted question instead of choosing. Respect an explicit merchant choice. |
 | `create_invoice` | Create a sandbox invoice; idempotent per `external_order_id`; returns `payment_url` |
 | `get_invoice` | Fetch the current invoice state |
 | `list_invoices` | Fetch one cursor page of invoices, with filters |

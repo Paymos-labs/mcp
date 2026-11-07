@@ -34,6 +34,14 @@ describe("doc resources", () => {
       const text = first?.text ?? "";
       expect(text.length).toBeGreaterThan(500);
       expect(first?.mimeType).toBe("text/html");
+      if (uri === "paymos://docs/quick-start") {
+        expect(text).toContain('data-code-lang="mcp"');
+        expect(text).toContain("npx -y @paymos/mcp setup");
+        expect(text).toContain("create_invoice");
+        expect(text).toContain("verify_webhook_signature");
+      } else {
+        expect(text).not.toContain('data-code-lang="mcp"');
+      }
     }
   });
 });

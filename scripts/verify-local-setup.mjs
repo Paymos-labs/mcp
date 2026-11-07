@@ -75,8 +75,11 @@ const client = new Client({ name: "paymos-offline-package-check", version: "1.0.
 try {
   await client.connect(transport);
   const tools = (await client.listTools()).tools.map(tool => tool.name).sort();
-  assert.deepEqual(tools, ["block_payment_channel", "cancel_invoice", "create_invoice", "create_payment_channel", "get_invoice", "get_payment_channel", "get_payment_channel_deposit", "list_invoices", "list_payment_channel_deposits", "list_payment_channels", "simulate_invoice_payment", "simulate_payment_channel_deposit", "unblock_payment_channel", "verify_webhook_signature"]);
+  assert.deepEqual(tools, ["block_payment_channel", "cancel_invoice", "create_invoice", "create_payment_channel", "get_invoice", "get_payment_channel", "get_payment_channel_deposit", "list_invoices", "list_payment_channel_deposits", "list_payment_channels", "recommend_payment_integration", "simulate_invoice_payment", "simulate_payment_channel_deposit", "unblock_payment_channel", "verify_webhook_signature"]);
   assert.equal((await client.listResources()).resources.length, 5);
+  assert.match(client.getInstructions() ?? "", /recommend_payment_integration/);
+  const advice = await client.callTool({ name: "recommend_payment_integration", arguments: { scenario: "both" } });
+  assert.equal(JSON.parse(advice.content[0].text).recommendation, "both");
   const payload = '{"event_id":"evt_local"}';
   const timestamp = Math.floor(Date.now() / 1000);
   const digest = createHmac("sha256", webhookSecret).update(`${timestamp}.${payload}`).digest("hex");
@@ -89,5 +92,5 @@ try {
 }
 assert.match(stderr, /sandbox session ready/);
 assert(!stderr.includes(secret) && !stderr.includes(webhookSecret));
-console.log(JSON.stringify({ packageSmoke: "pass", tools: 14, resources: 5, privateFile: true,
+console.log(JSON.stringify({ packageSmoke: "pass", tools: 15, resources: 5, privateFile: true,
   installedBinSetup: "pass", configuredLauncher: "pass", repeat: "pass", help: "pass", signatureFromFile: "pass", networkTests: "not run" }));

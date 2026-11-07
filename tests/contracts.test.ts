@@ -9,7 +9,7 @@ import { connect, TEST_KEY_ID, TEST_SECRET } from "./helpers.js";
  * major version and keep the old names alive through a deprecation period.
  */
 describe("tool contract freeze", () => {
-  it("exposes the six v1 tools and eight payment channel tools", async () => {
+  it("exposes the existing tools and the integration recommendation", async () => {
     const client = await connect(new PaymosGateway({ apiKeyId: TEST_KEY_ID, apiSecret: TEST_SECRET }));
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name).sort()).toEqual([
@@ -23,6 +23,7 @@ describe("tool contract freeze", () => {
       "list_invoices",
       "list_payment_channel_deposits",
       "list_payment_channels",
+      "recommend_payment_integration",
       "simulate_payment_channel_deposit",
       "simulate_invoice_payment",
       "unblock_payment_channel",

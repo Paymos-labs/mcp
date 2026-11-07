@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-07
+
+- feat(publicweb,docs,blazor,mcp): add MCP prompt tab to code snippets and compact /contacts header
+- docs(sdk): backfill published mirror changelogs across SDKs and MCP
+- chore: sync Spec Forge 1.6.1, MCP integration recommendation, webhook alert hold, and social agent runs
+- docs(refunds): publish merchant refunds API reference and guides across 6 locales
+
 ## [1.4.1] - 2026-11-02
 
 - docs: regenerate merged documentation on shared node
