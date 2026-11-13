@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseJson } from "jsonc-parser";
@@ -6,6 +6,7 @@ import { parse as parseToml } from "smol-toml";
 import { describe, expect, it, vi } from "vitest";
 import { defaultConfigPath, planClientConfig, runSetup, type SetupIO } from "../src/setup.js";
 import { readCredentialFile } from "../src/credential-file.js";
+import { LOCK_SUFFIX } from "../src/setup-lock.js";
 
 vi.mock("node:fs", async importOriginal => {
   const fs = await importOriginal<typeof import("node:fs")>();
@@ -167,6 +168,80 @@ describe("setup writes", () => {
     await expect(runSetup(["--client", "cursor"], {}, io, f.context)).rejects.toThrow("changed during setup");
     expect(readFileSync(path, "utf8")).toBe('{"model":"other-writer"}');
     expect(existsSync(f.credentials)).toBe(false);
+  });
+
+  // M36-01. The comparison with the planned snapshot and the rename that publishes the config are
+  // two system calls. Two setups that planned from the same config could both pass the comparison,
+  // and the later rename then replaced the earlier one's Paymos entry while both reported success.
+  it("competing setup for the same destination never silently replaces an entry", async () => {
+    const f = fixture();
+    const config = defaultConfigPath("cursor", {}, f.context);
+    save(config, '{"model":"keep"}');
+    const otherCredentials = join(f.home, "second", "keys.json");
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    let competing: Promise<string> | undefined;
+    vi.mocked(renameSync).mockImplementationOnce((from, to) => {
+      // The first setup has compared and is about to publish. With every value supplied by flags
+      // and env, runSetup has no await before its own publication, so the second setup runs to
+      // its outcome inside this call, from the same on-disk config the first one planned from.
+      competing = runSetup(["--client", "cursor", "--credentials-file", otherCredentials], env, f.io, f.context)
+        .then(() => "configured", (cause: unknown) => String(cause));
+      actual.renameSync(from, to);
+    });
+    await runSetup(["--client", "cursor"], env, f.io, f.context);
+    expect(await competing).toContain("changed during setup");
+    expect(parseJson(readFileSync(config, "utf8"))).toEqual({ model: "keep", mcpServers: { paymos: {
+      command: "npx", args: ["-y", "@paymos/mcp"], env: { PAYMOS_CREDENTIALS_FILE: f.credentials },
+    } } });
+    // The refused setup published nothing: no second credentials file, no leftover lock.
+    expect(existsSync(otherCredentials)).toBe(false);
+    expect(existsSync(config + LOCK_SUFFIX)).toBe(false);
+  });
+
+  it("refuses while another setup holds the destination and writes nothing", async () => {
+    const f = fixture();
+    const config = defaultConfigPath("cursor", {}, f.context);
+    save(config, '{"model":"keep"}');
+    save(config + LOCK_SUFFIX, "other setup");
+    await expect(runSetup(["--client", "cursor"], env, f.io, f.context)).rejects.toThrow("changed during setup");
+    expect(readFileSync(config, "utf8")).toBe('{"model":"keep"}');
+    expect(readFileSync(config + LOCK_SUFFIX, "utf8")).toBe("other setup");
+    expect(existsSync(f.credentials)).toBe(false);
+  });
+
+  it("is not blocked by a lock left by a setup that did not exit normally", async () => {
+    const f = fixture();
+    const config = defaultConfigPath("cursor", {}, f.context);
+    save(config, '{"model":"keep"}');
+    save(config + LOCK_SUFFIX, "crashed setup");
+    const hourAgo = new Date(Date.now() - 3_600_000);
+    utimesSync(config + LOCK_SUFFIX, hourAgo, hourAgo);
+    await runSetup(["--client", "cursor"], env, f.io, f.context);
+    expect(parseJson(readFileSync(config, "utf8")).mcpServers.paymos.env.PAYMOS_CREDENTIALS_FILE).toBe(f.credentials);
+    expect(existsSync(config + LOCK_SUFFIX)).toBe(false);
+  });
+
+  it("releases the destination when publication fails", async () => {
+    const f = fixture();
+    const config = defaultConfigPath("cursor", {}, f.context);
+    save(config, "{}");
+    vi.mocked(renameSync).mockImplementationOnce(() => { throw new Error("write denied"); });
+    await expect(runSetup(["--client", "cursor"], env, f.io, f.context)).rejects.toThrow("could not save");
+    expect(existsSync(config + LOCK_SUFFIX)).toBe(false);
+    await runSetup(["--client", "cursor"], env, f.io, f.context);
+    expect(readFileSync(config, "utf8")).toContain("PAYMOS_CREDENTIALS_FILE");
+  });
+
+  it("dry-run and an unchanged rerun take no lock", async () => {
+    const f = fixture();
+    const config = defaultConfigPath("cursor", {}, f.context);
+    await runSetup(["--client", "cursor"], env, f.io, f.context);
+    // A lock held by someone else would refuse any run that reaches publication.
+    save(config + LOCK_SUFFIX, "other setup");
+    await runSetup(["--client", "cursor", "--dry-run"], env, f.io, f.context);
+    await runSetup(["--client", "cursor"], env, f.io, f.context);
+    expect(f.logs.at(-1)).toContain("already matches");
+    expect(readFileSync(config + LOCK_SUFFIX, "utf8")).toBe("other setup");
   });
 
   it("marks secrets hidden and cancellation creates no files", async () => {

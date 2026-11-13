@@ -14,6 +14,7 @@ import type { PaymosMcpCredentials } from "./config.js";
 import { readCredentialFile } from "./credential-file.js";
 import { checkCredentials } from "./gate.js";
 import { SETUP_COPY } from "./setup-copy.js";
+import { DestinationBusyError, withDestinationLock } from "./setup-lock.js";
 
 export const SETUP_CLIENTS = [
   "codex", "claude-code", "claude-desktop", "kimi", "cursor", "windsurf", "opencode", "vscode", "generic",
@@ -305,13 +306,20 @@ export async function runSetup(
   if (before.content === next && stored !== undefined) { io.log(SETUP_COPY.unchanged(configPath)); return; }
   let createdKeys: { ino: number; dev: number } | undefined;
   try {
-    assertUnchanged(before);
-    assertUnchanged(beforeKeys);
-    if (stored === undefined) {
-      createdKeys = writeConfig(beforeKeys, JSON.stringify(credentials, null, 2) + "\n");
-    }
-    if (before.content !== next) writeConfig(before, next);
+    // `next` was planned from `before`. Under the lock the config is read again and must still
+    // be those bytes, so a competing setup for the same destination either meets the lock or
+    // meets a config that is no longer its own snapshot; neither can replace the other's entry.
+    // Writers that do not take this lock are not covered (see setup-lock.ts).
+    withDestinationLock(configPath, () => {
+      assertUnchanged(before);
+      assertUnchanged(beforeKeys);
+      if (stored === undefined) {
+        createdKeys = writeConfig(beforeKeys, JSON.stringify(credentials, null, 2) + "\n");
+      }
+      if (before.content !== next) writeConfig(before, next);
+    });
   } catch (cause) {
+    if (cause instanceof DestinationBusyError) error("changed");
     // Only remove the exact file created by this invocation, never another writer's data.
     if (createdKeys !== undefined) {
       try {
