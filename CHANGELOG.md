@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-18
+
+- feat(mcp): implement merchant-mcp-phase2 OAuth 2.1 host, dashboard parity, and CLI
+
+- feat(mcp): connect a merchant account from Codex or Claude Code through Paymos OAuth, with Owner consent and dashboard connection management
+- feat(mcp): add proof-bound `install-secret`, `upload-file`, and `download-file` helpers alongside local Sandbox
+
 ## [1.5.1] - 2026-11-13
 
 - fix(plugins,publicweb): SDK webhook credit recipes, CMS recovery, redirects and CSP logs (audit 2026-11-13)

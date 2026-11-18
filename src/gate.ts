@@ -54,3 +54,22 @@ export function startupLine(check: CredentialCheck, apiKeyId: string): string {
     ? `[paymos-mcp] sandbox session ready (${apiKeyId.slice(0, TEST_KEY_PREFIX.length + 4)}…)`
     : `[paymos-mcp] ${check.code}: ${check.message}`;
 }
+
+// Remote delivery errors are independent of the local Sandbox credential gate.
+const deliveryMessages = {
+  delivery_arguments: "Check the required --prepare or --token, --request-id, and file options.",
+  delivery_unsafe_path: "Choose a regular file inside the current directory, without links or traversal.",
+  delivery_state_unavailable: "The local delivery preparation is missing, expired, or already used.",
+  delivery_context_mismatch: "The delivery does not match its prepared operation or file.",
+  delivery_unavailable: "The delivery is unavailable from its original connection.",
+  delivery_request_failed: "Paymos could not complete the delivery request.",
+  delivery_invalid_response: "Paymos returned an unexpected delivery response.",
+  delivery_file_too_large: "The delivery exceeds the file size limit.",
+  delivery_local_io_failed: "The delivery could not be saved locally.",
+} as const;
+
+export class MerchantDeliveryError extends Error {
+  constructor(readonly code: keyof typeof deliveryMessages) {
+    super(code + ": " + deliveryMessages[code]);
+  }
+}

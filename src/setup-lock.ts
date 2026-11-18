@@ -12,7 +12,7 @@ import { dirname } from "node:path";
  * one released it and then fails the comparison because the file is no longer the one it
  * planned from.
  *
- * Scope: this is an advisory lock that only setup takes. A writer that does not take it — the
+ * Scope: this is an advisory lock used by setup and auth. A writer that does not take it — the
  * MCP client saving its own settings, an editor — is not excluded by it.
  */
 
@@ -34,7 +34,11 @@ export class DestinationBusyError extends Error {
   }
 }
 
-type Identity = { ino: number; dev: number };
+type Identity = { ino: bigint; dev: bigint; birthtimeNs: bigint };
+
+function sameIdentity(first: Identity, second: Identity): boolean {
+  return first.ino === second.ino && first.dev === second.dev && first.birthtimeNs === second.birthtimeNs;
+}
 
 function acquire(lock: string, now: () => number): Identity {
   for (let attempt = 0; ; attempt++) {
@@ -48,8 +52,17 @@ function acquire(lock: string, now: () => number): Identity {
       continue;
     }
     try {
-      const stat = fstatSync(fd);
-      return { ino: stat.ino, dev: stat.dev };
+      const opened = fstatSync(fd, { bigint: true });
+      const pathStat = lstatSync(lock, { bigint: true });
+      // Older Windows libuv reports dev=0 for a path lookup and a real volume for fstat.
+      // Match the inode and creation time against the open file, and store the path identity
+      // so release compares two snapshots taken with the same API.
+      if (!opened.isFile() || !pathStat.isFile() || opened.ino !== pathStat.ino
+        || opened.birthtimeNs !== pathStat.birthtimeNs
+        || (opened.dev !== 0n && pathStat.dev !== 0n && opened.dev !== pathStat.dev)) {
+        throw new DestinationBusyError();
+      }
+      return pathStat;
     } finally {
       closeSync(fd);
     }
@@ -59,7 +72,10 @@ function acquire(lock: string, now: () => number): Identity {
 /** True when the entry is gone afterwards, so one more exclusive create may be attempted. */
 function removeIfStale(lock: string, now: () => number): boolean {
   try {
-    if (now() - lstatSync(lock).mtimeMs < STALE_LOCK_MS) return false;
+    const stale = lstatSync(lock, { bigint: true });
+    if (!stale.isFile() || now() - Number(stale.mtimeMs) < STALE_LOCK_MS) return false;
+    const current = lstatSync(lock, { bigint: true });
+    if (!current.isFile() || !sameIdentity(stale, current) || stale.mtimeNs !== current.mtimeNs) return false;
     unlinkSync(lock);
     return true;
   } catch (cause) {
@@ -72,8 +88,8 @@ function removeIfStale(lock: string, now: () => number): boolean {
 /** Removes the lock only while it is still the file this call created. */
 function release(lock: string, mine: Identity): void {
   try {
-    const stat = lstatSync(lock);
-    if (stat.ino === mine.ino && stat.dev === mine.dev) unlinkSync(lock);
+    const stat = lstatSync(lock, { bigint: true });
+    if (stat.isFile() && sameIdentity(stat, mine)) unlinkSync(lock);
   } catch { /* Already removed, or replaced by another holder after a stale takeover. */ }
 }
 

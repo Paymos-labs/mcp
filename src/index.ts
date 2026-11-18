@@ -3,9 +3,12 @@
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { runAuth } from "./auth.js";
 import { loadCredentials, parseFlags } from "./config.js";
+import { runDownloadFile, runUploadFile } from "./files.js";
 import { PaymosGateway } from "./gateway.js";
 import { startupLine } from "./gate.js";
+import { runInstallSecret } from "./install-secret.js";
 import { buildServer } from "./server.js";
 import { runSetup } from "./setup.js";
 import { SETUP_COPY } from "./setup-copy.js";
@@ -22,6 +25,23 @@ export async function main(
 ): Promise<void> {
   if (argv[0] === "setup") {
     await runSetup(argv.slice(1), env);
+    return;
+  }
+  if (argv[0] === "auth") {
+    const code = await runAuth(argv.slice(1), env);
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
+  if (argv[0] === "install-secret") {
+    await runInstallSecret(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "upload-file") {
+    await runUploadFile(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "download-file") {
+    await runDownloadFile(argv.slice(1));
     return;
   }
   if (argv[0] === "--help" || argv[0] === "-h") {

@@ -21,8 +21,10 @@ export const SETUP_CLIENTS = [
 ] as const;
 type SetupClient = typeof SETUP_CLIENTS[number];
 type Env = Readonly<Record<string, string | undefined>>;
-type JsonObject = Record<string, unknown>;
-type Snapshot = { path: string; content: string | null };
+export type JsonObject = Record<string, unknown>;
+type FileIdentity = { ino: bigint; dev: bigint; birthtimeNs: bigint };
+export type Snapshot = { path: string; content: null } | { path: string; content: string; identity: FileIdentity };
+export type ConfigFormat = "toml" | "jsonc";
 
 export interface SetupIO {
   readonly interactive: boolean;
@@ -44,6 +46,10 @@ interface SetupOptions {
 
 function error(kind: keyof typeof SETUP_COPY.errors): never {
   throw new Error(SETUP_COPY.errors[kind]);
+}
+
+function sameIdentity(a: FileIdentity, b: FileIdentity): boolean {
+  return a.ino === b.ino && a.dev === b.dev && a.birthtimeNs === b.birthtimeNs;
 }
 
 function options(argv: readonly string[]): SetupOptions {
@@ -74,13 +80,13 @@ function options(argv: readonly string[]): SetupOptions {
   return result;
 }
 
-function object(value: unknown): value is JsonObject {
+export function object(value: unknown): value is JsonObject {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 // smol-toml uses null-prototype tables. Compare their data without treating that
 // implementation detail as a user config change; scalar types stay strict.
-function equalData(left: unknown, right: unknown): boolean {
+export function equalData(left: unknown, right: unknown): boolean {
   if (isDeepStrictEqual(left, right)) return true;
   if (!object(left) || !object(right)) return false;
   const plain = (value: object) => Object.getPrototypeOf(value) === null || Object.getPrototypeOf(value) === Object.prototype;
@@ -120,15 +126,18 @@ export function defaultConfigPath(client: SetupClient, env: Env, context: SetupC
   }
 }
 
-function snapshot(path: string): Snapshot {
+export function snapshot(path: string): Snapshot {
   let fd: number | undefined;
   try {
-    const stat = lstatSync(path);
+    const stat = lstatSync(path, { bigint: true });
     if (stat.isSymbolicLink()) error("symlink");
-    if (!stat.isFile() || stat.size > 4_194_304) error("configFile");
+    if (!stat.isFile() || stat.size > 4_194_304n) error("configFile");
     fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    if (fstatSync(fd).ino !== stat.ino) error("changed");
-    return { path, content: readFileSync(fd, "utf8") };
+    const opened = fstatSync(fd, { bigint: true });
+    // Older Windows libuv reports a zero device for lstat, but not fstat.
+    if (opened.ino !== stat.ino || opened.birthtimeNs !== stat.birthtimeNs
+      || (stat.dev !== 0n && opened.dev !== stat.dev)) error("changed");
+    return { path, content: readFileSync(fd, "utf8"), identity: stat };
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code === "ENOENT") return { path, content: null };
     if (cause instanceof Error && Object.values(SETUP_COPY.errors).includes(cause.message)) throw cause;
@@ -138,8 +147,10 @@ function snapshot(path: string): Snapshot {
   }
 }
 
-function assertUnchanged(before: Snapshot): void {
-  if (snapshot(before.path).content !== before.content) error("changed");
+export function assertUnchanged(before: Snapshot): void {
+  const current = snapshot(before.path);
+  if (current.content !== before.content || (current.content !== null && before.content !== null
+    && !sameIdentity(current.identity, before.identity))) error("changed");
 }
 
 function assertUniqueKeys(node: Node): void {
@@ -163,6 +174,39 @@ function jsonConfig(text: string): JsonObject {
   return value;
 }
 
+export function parseConfig(format: ConfigFormat, original: string | null): JsonObject {
+  if (format === "jsonc") return jsonConfig(original ?? "{}\n");
+  try { return parseToml(original ?? ""); } catch { return error("configFile"); }
+}
+
+export function configEntries(root: JsonObject, group: string): JsonObject {
+  const entries = root[group];
+  if (entries === undefined) return {};
+  if (!object(entries)) return error("configFile");
+  return entries;
+}
+
+export function planConfigEntry(
+  format: ConfigFormat, original: string | null, group: string, name: string, entry: JsonObject,
+): string {
+  const root = parseConfig(format, original);
+  const entries = configEntries(root, group);
+  if (Object.hasOwn(entries, name)) {
+    if (!equalData(entries[name], entry)) error("conflict");
+    return original!;
+  }
+  const text = original ?? (format === "toml" ? "" : "{}\n");
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const next = format === "toml"
+    ? text + eol + stringifyToml({ [group]: { [name]: entry as TomlTable } }).replace(/\r?\n/g, eol)
+    : applyEdits(text, modify(text, [group, name], entry, {
+      formattingOptions: { insertSpaces: true, tabSize: 2, eol },
+    }));
+  const expected = { ...root, [group]: { ...entries, [name]: entry } };
+  if (!equalData(parseConfig(format, next), expected)) error("configFile");
+  return next;
+}
+
 /** All adapters share one launcher; only the client's config envelope varies. */
 export function planClientConfig(
   client: SetupClient, original: string | null, credentialsPath: string, platform: NodeJS.Platform,
@@ -173,45 +217,13 @@ export function planClientConfig(
   const entry = client === "opencode"
     ? { type: "local", command: [command, ...args], environment: env, enabled: true }
     : { ...(client === "vscode" ? { type: "stdio" } : {}), command, args, env };
-  const text = original ?? "{}\n";
-  if (client === "codex") {
-    let root: TomlTable;
-    try { root = parseToml(original ?? ""); } catch { return error("configFile"); }
-    const servers = root.mcp_servers;
-    if (servers !== undefined && !object(servers)) error("configFile");
-    const existing = (servers as JsonObject | undefined)?.paymos;
-    if (existing !== undefined) {
-      if (!equalData(existing, entry)) error("conflict");
-      return original!;
-    }
-    const eol = text.includes("\r\n") ? "\r\n" : "\n";
-    const block = stringifyToml({ mcp_servers: { paymos: entry } }).replace(/\r?\n/g, eol);
-    const next = (original ?? "") + eol + block;
-    try {
-      const expected = { ...root, mcp_servers: { ...(servers as JsonObject | undefined), paymos: entry } };
-      if (!equalData(parseToml(next), expected)) error("configFile");
-    } catch { return error("configFile"); }
-    return next;
-  }
-  const root = jsonConfig(text);
+  if (client === "codex") return planConfigEntry("toml", original, "mcp_servers", "paymos", entry);
   const group = client === "opencode" ? "mcp" : client === "vscode" ? "servers" : "mcpServers";
-  const servers = root[group];
-  if (servers !== undefined && !object(servers)) error("configFile");
-  const existing = (servers as JsonObject | undefined)?.paymos;
-  if (existing !== undefined) {
-    if (!isDeepStrictEqual(existing, entry)) error("conflict");
-    return text;
-  }
-  const next = applyEdits(text, modify(text, [group, "paymos"], entry, {
-    formattingOptions: { insertSpaces: true, tabSize: 2, eol: text.includes("\r\n") ? "\r\n" : "\n" },
-  }));
-  const expected = { ...root, [group]: { ...(servers as JsonObject | undefined), paymos: entry } };
-  if (!isDeepStrictEqual(jsonConfig(next), expected)) error("configFile");
-  return next;
+  return planConfigEntry("jsonc", original, group, "paymos", entry);
 }
 
 /** Publish a complete file; an absent target is created without clobbering a new arrival. */
-function writeConfig(before: Snapshot, content: string): { ino: number; dev: number } {
+export function writeConfig(before: Snapshot, content: string): FileIdentity {
   mkdirSync(dirname(before.path), { recursive: true, mode: 0o700 });
   const temp = join(dirname(before.path), `.paymos-${randomUUID()}.tmp`);
   let created = false;
@@ -219,14 +231,23 @@ function writeConfig(before: Snapshot, content: string): { ino: number; dev: num
     writeFileSync(temp, content, { encoding: "utf8", mode: 0o600, flag: "wx" });
     created = true;
     if (process.platform !== "win32") chmodSync(temp, 0o600);
-    const identity = lstatSync(temp);
+    const identity = lstatSync(temp, { bigint: true });
     assertUnchanged(before);
     if (before.content === null) linkSync(temp, before.path);
     else renameSync(temp, before.path);
-    return { ino: identity.ino, dev: identity.dev };
+    return identity;
   } finally {
     if (created && existsSync(temp)) unlinkSync(temp);
   }
+}
+
+/** Called under the destination lock; restore only the bytes and file we published. */
+export function restoreConfig(before: Snapshot, content: string, identity: FileIdentity): boolean {
+  const current = snapshot(before.path);
+  if (current.content === null || current.content !== content || !sameIdentity(current.identity, identity)) return false;
+  if (before.content === null) unlinkSync(before.path);
+  else writeConfig(current, before.content);
+  return true;
 }
 
 async function ask(io: SetupIO, label: string, secret = false): Promise<string> {
@@ -234,7 +255,7 @@ async function ask(io: SetupIO, label: string, secret = false): Promise<string> 
   return (await io.ask(label, secret)).trim();
 }
 
-function terminalIO(): SetupIO {
+export function terminalIO(): SetupIO {
   return {
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     log: message => console.log(message),
@@ -304,7 +325,7 @@ export async function runSetup(
     return;
   }
   if (before.content === next && stored !== undefined) { io.log(SETUP_COPY.unchanged(configPath)); return; }
-  let createdKeys: { ino: number; dev: number } | undefined;
+  let createdKeys: FileIdentity | undefined;
   try {
     // `next` was planned from `before`. Under the lock the config is read again and must still
     // be those bytes, so a competing setup for the same destination either meets the lock or
@@ -323,8 +344,8 @@ export async function runSetup(
     // Only remove the exact file created by this invocation, never another writer's data.
     if (createdKeys !== undefined) {
       try {
-        const stat = lstatSync(credentialsPath);
-        if (!stat.isSymbolicLink() && stat.ino === createdKeys.ino && stat.dev === createdKeys.dev
+        const stat = lstatSync(credentialsPath, { bigint: true });
+        if (!stat.isSymbolicLink() && sameIdentity(stat, createdKeys)
           && isDeepStrictEqual(readCredentialFile(credentialsPath), credentials)) unlinkSync(credentialsPath);
       } catch { /* Leave changed or unreadable files untouched. */ }
     }

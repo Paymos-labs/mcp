@@ -51,3 +51,18 @@ Restart or reconnect your MCP client after setup.`,
     write: "Setup could not save the files. Check the target paths and write permissions, then retry.",
   },
 };
+
+export const AUTH_COPY = {
+  help: "Usage: paymos auth [--client codex|claude-code]\n\nConnect your merchant account in the client's browser sign-in.",
+  chooseClient: "Choose your MCP client (codex or claude-code)",
+  errors: {
+    client_required: "Choose your client with --client codex or --client claude-code.",
+    configuration_conflict: "A Paymos entry conflicts with this connection or changed during setup. Review your MCP settings and try again.",
+    configuration_scope_unknown: "The effective MCP configuration could not be verified. Use Authenticate in your client's MCP settings.",
+    client_installation_unknown: "A supported client installation could not be verified. Use Authenticate in your client's MCP settings or run its native mcp login command.",
+    auth_cancelled: "Sign-in was cancelled.",
+    auth_failed: "The client could not complete sign-in. Check its output for details.",
+    configuration_restore_skipped: "Could not restore the previous MCP settings. Review your client's configuration before retrying.",
+    configuration_write_failed: "Could not save the MCP settings. Check the file and its permissions.",
+  },
+};

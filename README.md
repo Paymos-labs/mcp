@@ -1,18 +1,75 @@
 # @paymos/mcp
 
-Connect your coding agent to the Paymos sandbox through a local MCP server. The agent can create test invoices, simulate payment scenarios, inspect invoice states, and verify webhook signatures while building your application around a Paymos server SDK.
+Paymos offers a local Sandbox server for integration testing and a hosted MCP connection for your merchant account.
 
-The local MCP server connects your coding agent to the Paymos sandbox with 14 tools and five documentation resources for testing merchant integrations.
+## Connect a merchant account
 
-Use a test Payment key pair. Live and Payout keys are rejected; API requests are signed through the official SDK, and real funds are not involved.
+Use the hosted Streamable HTTP URL when Merchant MCP is enabled for your Paymos instance.
 
-## Requirements
+- URL `https://app.paymos.io/connect/merchant-mcp`
+- OAuth scopes `merchant:mcp` and `offline_access`
+
+Start sign-in from the MCP settings or your terminal. Paymos opens in your browser. The account owner chooses the merchant and environments, reviews the access being granted, and confirms. The client stores its OAuth session and can then call the merchant tools. Dashboard → Developers → Agents shows connection status, activity, recent operations and the Disconnect action.
+
+### Paymos command
+
+```bash
+paymos auth --client codex
+paymos auth --client claude-code
+```
+
+With the npm package, run `npx -y @paymos/mcp auth --client codex`. The helper adds the hosted entry and starts the native browser flow. It uses `paymos-merchant` when `paymos` is already the Sandbox entry.
+
+### Codex
+
+In MCP settings, add Paymos as a Streamable HTTP server and choose Authenticate. For a pre-registered OAuth client, set the following in your Codex `config.toml`.
+
+```toml
+[mcp_servers.paymos]
+url = "https://app.paymos.io/connect/merchant-mcp"
+scopes = ["merchant:mcp", "offline_access"]
+
+[mcp_servers.paymos.oauth]
+client_id = "paymos-merchant-codex"
+callback_port = 33419
+callback_url = "http://127.0.0.1:33419/callback"
+```
+
+Run `codex mcp login paymos`. Use the same listener port and callback URL. For a coexisting Sandbox entry, use `paymos-merchant` in both the configuration and the login command. [Codex MCP configuration](https://learn.chatgpt.com/docs/config-file/config-reference)
+
+### Claude Code
+
+```bash
+claude mcp add --transport http --scope user --client-id paymos-merchant-claude-code --callback-port 33420 paymos https://app.paymos.io/connect/merchant-mcp
+claude mcp login paymos
+```
+
+You can also select Paymos → Authenticate in Claude Code’s `/mcp` panel. When a local Paymos Sandbox entry already occupies the name, use `paymos-merchant` in both commands. Clients with public OAuth discovery and native loopback dynamic registration can use the hosted URL directly. [Claude Code MCP sign-in](https://code.claude.com/docs/en/mcp#authenticate-from-the-command-line)
+
+### Key and file delivery
+
+The merchant tools can create and rotate Payment and Payout credentials under the merchant’s access policy. The tools return a short-lived installer ticket. The installer uses a verifier generated on the destination machine to exchange the ticket and save the credentials into the chosen environment file.
+
+```bash
+paymos install-secret --prepare --env-file .env --merchant-id "$PAYMOS_MERCHANT_ID" --environment production --operation-id "$PAYMOS_OPERATION_ID"
+paymos install-secret --env-file .env --request-id "$PAYMOS_REQUEST_ID" --token "$PAYMOS_INSTALLER_TICKET"
+```
+
+Pass the first command’s `request_id` and `challenge` as the tool’s `delivery` input with the same merchant, environment and operation ID. Run the second command on the same machine with the returned ticket. For private exports and staged logo or avatar uploads, the `download-file` and `upload-file` helpers use the same prepare-and-redeem flow with `--file`. Upload preparation also supplies the file size, content type and hash.
+
+Withdrawals follow the merchant’s current policy and native approval rules. Manage withdrawal whitelist addresses from the dashboard.
+
+## Local Sandbox
+
+The local stdio server provides 14 tools and five documentation resources for creating and simulating test invoices, checking invoice states and verifying webhook signatures. It signs API requests with the official SDK using a test Payment key pair.
+
+### Requirements
 
 - Requires Node.js 22.12 or later.
 - A Paymos merchant account with a test key pair from Dashboard → Developer → API Keys (`pk_test_…` and `sk_test_…`)
 - An MCP client that can launch a local stdio server
 
-## Setup
+### Setup the local server
 
 Run:
 
@@ -215,8 +272,6 @@ Five documentation pages are available inside the MCP session:
 The server opens no network listener and calls the Merchant API through `@paymos/sdk`. Setup output does not print secret values. Check your chosen client and model provider's logging settings separately. Setup stores keys in a separate local file; on Unix, new credential files use mode `0600` in a private directory. On Windows, access follows the account directory's permissions; the file is not encrypted by setup.
 
 Live (`pk_live_`/`sk_live_`) and payout (`rk_…`) keys are rejected during setup, at server startup, and on tool calls. After checking your integration in the sandbox, run your own application with its live keys. This local MCP server stays outside production payment paths.
-
-Hosted MCP is deferred and is not available as a connection method.
 
 ## Development
 
