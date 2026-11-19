@@ -4,33 +4,46 @@ export const SETUP_COPY = {
   apiKey: "Test API key ID (pk_test_…)",
   apiSecret: "Test API secret (sk_test_…; input hidden)",
   webhookSecret: "Webhook secret (optional; press Enter to skip; input hidden)",
+  offerBrowserAuth: "Sign in to Paymos in your browser now so account and sandbox tools are ready too? [Y/n]",
+  offerBrowserRetry: "Please enter y (yes) or n (no) [Y/n]",
+  referenceReady:
+    "Paymos is ready in offline reference and integration-advisor mode (27 docs, advisor, and webhook verifier). Account/sandbox tools will prompt browser sign-in only when called.",
+  loginSkippedAfterConfig:
+    "Your MCP client configuration remains saved in offline reference and advisor mode. Run `npx -y @paymos/mcp setup` again or call an account tool later to sign in.",
   help: `Usage: npx -y @paymos/mcp setup [options]
 
-Connect a local MCP client using a Paymos test key pair.
+Configure your AI IDE or CLI for Paymos Merchant MCP (zero-key setup with
+offline docs, integration advisor, and optional browser OAuth sign-in).
 
 Options:
   --client NAME            codex, claude-code, claude-desktop, antigravity,
                            kimi, zcode (or glm), cursor, windsurf, opencode,
                            vscode, or generic
   --config PATH            Client configuration file (required for generic)
-  --credentials-file PATH  Separate file for your test credentials
+  --origin URL             Paymos origin override (default: https://app.paymos.io)
+  --token-file PATH        OAuth token store path override
+  --no-login               Configure clients without offering browser OAuth
+  --sandbox                Use legacy Sandbox test-key setup (credentials.json)
+  --credentials-file PATH  Separate file for Sandbox test credentials
   --dry-run                Preview file paths and changes without writing
   --help, -h               Show this help
 
-Without --client, setup asks you to choose a client in an interactive terminal.
-Enter your test keys when prompted; secret input is hidden. Setup can also read
-PAYMOS_API_KEY_ID, PAYMOS_API_SECRET, and optional PAYMOS_WEBHOOK_SECRET.
-Live and payout keys are refused.
+By default, setup detects installed clients (or asks in an interactive
+terminal), writes the \`@paymos/mcp connect\` configuration first, and then
+offers browser OAuth sign-in ([Y/n]). Declining OAuth or running non-
+interactively leaves Paymos configured in offline reference & advisor mode.
 
-Credentials default to $XDG_CONFIG_HOME/paymos/mcp/credentials.json, or
-~/.config/paymos/mcp/credentials.json when XDG_CONFIG_HOME is unset.
-The client config contains the credentials file path, not the keys.
+Legacy Sandbox test-key mode activates only with --sandbox, --credentials-file,
+or PAYMOS_API_KEY_ID / PAYMOS_API_SECRET / PAYMOS_CREDENTIALS_FILE in env
+(live and payout keys are refused). Do not mix Sandbox key options with
+--origin, --token-file, or --no-login.
 
 Examples:
   npx -y @paymos/mcp setup
   npx -y @paymos/mcp setup --client codex
-  npx -y @paymos/mcp setup --client antigravity
+  npx -y @paymos/mcp setup --client antigravity --no-login
   npx -y @paymos/mcp setup --client glm
+  npx -y @paymos/mcp setup --sandbox --client codex
   npx -y @paymos/mcp setup --client generic --config /path/to/mcp.json
 
 Restart or reconnect your MCP client after setup.`,

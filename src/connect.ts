@@ -4,7 +4,9 @@ import {
   type JSONRPCMessage, type JSONRPCRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { Readable, Writable } from "node:stream";
+import { CONNECT_INSTRUCTIONS, LOCAL_CONNECT_TOOLS, tryHandleLocalConnectTool } from "./connect-advisor.js";
 import { MERCHANT_TOOLS } from "./generated/merchant-tools.js";
+import { CONNECT_DOC_RESOURCES } from "./generated/resources.js";
 import {
   defaultTokenPath, MERCHANT_MCP_RESOURCE_PATH, requireAccessToken,
   tryGetAccessToken, validateOrigin, type OAuthSessionOptions,
@@ -43,6 +45,15 @@ export interface ConnectRuntimeOptions {
 
 const TOOLS_LIST_TIMEOUT_MS = 5_000;
 const TOOLS_CALL_TIMEOUT_MS = 120_000;
+const CONNECT_DOC_BY_URI = new Map(CONNECT_DOC_RESOURCES.map(item => [item.uri, item]));
+const LOCAL_TOOL_NAMES = new Set(LOCAL_CONNECT_TOOLS.map(tool => tool.name));
+
+function mergeConnectTools(baseTools: readonly unknown[]): unknown[] {
+  const remaining = baseTools.filter(
+    tool => !(isPlainObject(tool) && typeof tool.name === "string" && LOCAL_TOOL_NAMES.has(tool.name)),
+  );
+  return [...LOCAL_CONNECT_TOOLS, ...remaining];
+}
 
 interface ParsedConnectFlags {
   readonly origin?: string;
@@ -331,7 +342,7 @@ export async function runConnect(
     try {
       const token = await tryGetAccessToken({ ...baseSessionOptions, signal });
       if (!token) {
-        await sendResult(request.id, { tools: MERCHANT_TOOLS });
+        await sendResult(request.id, { tools: mergeConnectTools(MERCHANT_TOOLS) });
         return;
       }
       const remaining = Math.max(1, toolsListTimeoutMs - (Date.now() - started));
@@ -340,16 +351,35 @@ export async function runConnect(
       );
       if (outcome.sessionId) remoteSessionId = outcome.sessionId;
       if (outcome.status === 200 && outcome.result && Array.isArray(outcome.result.tools)) {
-        await sendResult(request.id, outcome.result);
+        await sendResult(request.id, {
+          ...outcome.result,
+          tools: mergeConnectTools(outcome.result.tools),
+        });
         return;
       }
     } catch {
       // Silent fallback keeps IDE startup unblocked on missing/stale tokens or network outages.
     }
-    await sendResult(request.id, { tools: MERCHANT_TOOLS });
+    await sendResult(request.id, { tools: mergeConnectTools(MERCHANT_TOOLS) });
   };
 
   const handleToolsCall = async (request: JSONRPCRequest): Promise<void> => {
+    const params = isPlainObject(request.params) ? request.params : undefined;
+    const toolName = typeof params?.name === "string" ? params.name : undefined;
+    if (toolName !== undefined) {
+      const localResult = await tryHandleLocalConnectTool(toolName, params?.arguments, {
+        origin,
+        tokenFile,
+        env,
+        ...(options.context?.platform !== undefined ? { platform: options.context.platform } : {}),
+        ...(options.now !== undefined ? { now: options.now } : {}),
+      });
+      if (localResult !== undefined) {
+        await sendResult(request.id, localResult as unknown as Record<string, unknown>);
+        return;
+      }
+    }
+
     let token: string | undefined;
     try {
       token = await requireAccessToken(baseSessionOptions);
@@ -424,6 +454,7 @@ export async function runConnect(
             name: "paymos-merchant",
             version: MCP_VERSION,
           },
+          instructions: CONNECT_INSTRUCTIONS,
         });
         return;
       }
@@ -431,8 +462,37 @@ export async function runConnect(
         await sendResult(message.id, {});
         return;
       case "resources/list":
-        await sendResult(message.id, { resources: [] });
+        await sendResult(message.id, {
+          resources: CONNECT_DOC_RESOURCES.map(({ uri, name, description, mimeType }) => ({
+            uri,
+            name,
+            description,
+            mimeType,
+          })),
+        });
         return;
+      case "resources/read": {
+        const uri = isPlainObject(message.params) && typeof message.params.uri === "string"
+          ? message.params.uri
+          : undefined;
+        if (uri === undefined || uri.trim() === "") {
+          await sendError(message.id, ErrorCode.InvalidParams, "Missing required resource uri.");
+          return;
+        }
+        const resource = CONNECT_DOC_BY_URI.get(uri);
+        if (!resource) {
+          await sendError(message.id, ErrorCode.InvalidParams, `Unknown resource URI: ${uri}`);
+          return;
+        }
+        await sendResult(message.id, {
+          contents: [{
+            uri: resource.uri,
+            mimeType: resource.mimeType,
+            text: resource.text,
+          }],
+        });
+        return;
+      }
       case "resources/templates/list":
         await sendResult(message.id, { resourceTemplates: [] });
         return;

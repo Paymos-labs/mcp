@@ -1,10 +1,16 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync,
+  statSync, symlinkSync, utimesSync, writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseJson } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildConnectEntry } from "../src/auth.js";
+import { readTokenStore } from "../src/oauth-session.js";
 import { defaultConfigPath, planClientConfig, runSetup, type SetupIO } from "../src/setup.js";
+import { SETUP_COPY } from "../src/setup-copy.js";
 import { readCredentialFile } from "../src/credential-file.js";
 import { LOCK_SUFFIX } from "../src/setup-lock.js";
 
@@ -137,7 +143,7 @@ describe("setup writes", () => {
   it("reuses a saved private pair when adding another client", async () => {
     const f = fixture();
     save(f.credentials, JSON.stringify(keys));
-    await runSetup(["--client", "cursor"], {}, f.io, f.context);
+    await runSetup(["--client", "cursor", "--sandbox"], {}, f.io, f.context);
     expect(readFileSync(defaultConfigPath("cursor", {}, f.context), "utf8")).toContain("PAYMOS_CREDENTIALS_FILE");
   });
 
@@ -190,7 +196,7 @@ describe("setup writes", () => {
       save(path, '{"model":"other-writer"}');
       return answers.shift()!;
     } };
-    await expect(runSetup(["--client", "cursor"], {}, io, f.context)).rejects.toThrow("changed during setup");
+    await expect(runSetup(["--client", "cursor", "--sandbox"], {}, io, f.context)).rejects.toThrow("changed during setup");
     expect(readFileSync(path, "utf8")).toBe('{"model":"other-writer"}');
     expect(existsSync(f.credentials)).toBe(false);
   });
@@ -273,12 +279,12 @@ describe("setup writes", () => {
     const f = fixture();
     const prompts: boolean[] = [];
     const answers = [keys.apiKeyId, keys.apiSecret, keys.webhookSecret];
-    await runSetup(["--client", "cursor"], {}, { ...f.io, interactive: true, ask: async (_label, secret) => {
+    await runSetup(["--client", "cursor", "--sandbox"], {}, { ...f.io, interactive: true, ask: async (_label, secret) => {
       prompts.push(secret); return answers.shift()!;
     } }, f.context);
     expect(prompts).toEqual([false, true, true]);
     const cancelled = fixture();
-    await expect(runSetup(["--client", "cursor"], {}, { ...cancelled.io, interactive: true,
+    await expect(runSetup(["--client", "cursor", "--sandbox"], {}, { ...cancelled.io, interactive: true,
       ask: async () => { throw new Error("cancelled"); } }, cancelled.context)).rejects.toThrow("cancelled");
     expect(existsSync(cancelled.credentials)).toBe(false);
   });
@@ -330,10 +336,367 @@ describe("setup writes", () => {
 
   it("shows help without prompting or writing, and refuses missing noninteractive input", async () => {
     const f = fixture();
-    await runSetup(["--help"], {}, f.io, f.context);
+    await expect(runSetup(["--help"], {}, f.io, f.context)).resolves.toBe(0);
     expect(f.logs[0]).toContain("Usage:");
+    expect(f.logs[0]).toContain("--sandbox");
     expect(existsSync(f.credentials)).toBe(false);
     await expect(runSetup(["--client", "generic"], env, f.io, f.context)).rejects.toThrow("--config");
-    await expect(runSetup(["--client", "codex"], {}, f.io, f.context)).rejects.toThrow("interactive terminal");
+    await expect(runSetup(["--client", "codex", "--sandbox"], {}, f.io, f.context)).rejects.toThrow("interactive terminal");
+  });
+});
+
+describe("universal zero-key setup", process.platform === "win32" ? { timeout: 25_000 } : {}, () => {
+  const universalRoots: string[] = [];
+
+  function universalFixture(platform: NodeJS.Platform = "linux") {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "paymos-setup-u-")));
+    universalRoots.push(root);
+    const home = join(root, "home");
+    const cwd = join(root, "project");
+    mkdirSync(home, { recursive: true });
+    mkdirSync(cwd, { recursive: true });
+    const uEnv = {
+      APPDATA: join(root, "Roaming"),
+      XDG_CONFIG_HOME: join(root, "xdg-config"),
+    };
+    const tokenFile = join(root, "tokens", "merchant-oauth.json");
+    const logs: string[] = [];
+    const io: SetupIO = {
+      interactive: false,
+      ask: async () => { throw new Error("unexpected prompt"); },
+      log: line => logs.push(line),
+    };
+    return { root, home, cwd, env: uEnv, tokenFile, logs, io, context: { home, cwd, platform } };
+  }
+
+  function mockBrowserOAuth(origin = "https://app.paymos.io", mode: "approve" | "deny" | "fail_discovery" = "approve") {
+    const issuer = `${origin}/`;
+    let openCalls = 0;
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      if (mode === "fail_discovery") {
+        throw new Error("network unreachable");
+      }
+      const url = String(input);
+      if (url === `${origin}/.well-known/oauth-protected-resource/connect/merchant-mcp`) {
+        return Response.json({ resource: `${origin}/connect/merchant-mcp`, authorization_servers: [issuer] });
+      }
+      if (url === `${origin}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${origin}/connect/authorize`,
+          token_endpoint: `${origin}/connect/token`,
+          registration_endpoint: `${origin}/connect/register`,
+          authorization_response_iss_parameter_supported: true,
+          code_challenge_methods_supported: ["S256"],
+        });
+      }
+      if (url === `${origin}/connect/token`) {
+        const params = new URLSearchParams(String(init?.body ?? ""));
+        expect(params.get("grant_type")).toBe("authorization_code");
+        return Response.json({
+          access_token: "at_setup_oauth_1",
+          refresh_token: "rt_setup_oauth_1",
+          expires_in: 300,
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const openBrowser = vi.fn(async (rawUrl: string) => {
+      openCalls++;
+      const authUrl = new URL(rawUrl);
+      const redirect = new URL(authUrl.searchParams.get("redirect_uri")!);
+      redirect.searchParams.set("state", authUrl.searchParams.get("state")!);
+      redirect.searchParams.set("iss", issuer);
+      if (mode === "deny") {
+        redirect.searchParams.set("error", "access_denied");
+      } else {
+        redirect.searchParams.set("code", "code_setup_1");
+      }
+      await fetch(redirect);
+    });
+
+    return {
+      hooks: { fetch: fetchMock, openBrowser },
+      getOpenCalls: () => openCalls,
+      fetchMock,
+      openBrowser,
+    };
+  }
+
+  afterEach(() => {
+    for (const root of universalRoots.splice(0)) rmSync(root, { force: true, recursive: true });
+  });
+
+  it.each([
+    "codex",
+    "claude-code",
+    "claude-desktop",
+    "antigravity",
+    "kimi",
+    "zcode",
+    "glm",
+    "cursor",
+    "windsurf",
+    "opencode",
+    "vscode",
+    "generic",
+  ] as const)("writes connect config for %s without API keys or browser in non-TTY mode", async client => {
+    for (const platform of ["win32", "linux"] as const) {
+      const f = universalFixture(platform);
+      const explicitConfig = client === "generic" || (client === "claude-desktop" && platform === "linux")
+        ? join(f.root, "explicit", "mcp.json")
+        : undefined;
+      const args = ["--client", client, ...(explicitConfig ? ["--config", explicitConfig] : [])];
+      const oauth = mockBrowserOAuth();
+
+      await expect(runSetup(args, f.env, f.io, f.context, oauth.hooks)).resolves.toBe(0);
+      expect(oauth.getOpenCalls()).toBe(0);
+      expect(f.logs.join("\n")).toContain(SETUP_COPY.referenceReady);
+      expect(f.logs.join("\n")).toContain(SETUP_COPY.restart);
+
+      const targetPath = explicitConfig ?? defaultConfigPath(client, f.env, f.context);
+      const expected = buildConnectEntry(client, "https://app.paymos.io", platform);
+      const raw = readFileSync(targetPath, "utf8");
+      if (client === "codex") {
+        expect(parseToml(raw)).toEqual({ mcp_servers: { paymos: expected } });
+      } else if (client === "opencode") {
+        expect(parseJson(raw)).toEqual({ mcp: { paymos: expected } });
+      } else if (client === "vscode") {
+        expect(parseJson(raw)).toEqual({ servers: { paymos: expected } });
+      } else if (client === "zcode" || client === "glm") {
+        expect(parseJson(raw)).toEqual({ mcp: { servers: { paymos: expected } } });
+      } else {
+        expect(parseJson(raw)).toEqual({ mcpServers: { paymos: expected } });
+      }
+
+      // Idempotent repeat does not re-write and stays exit 0.
+      const prevLogsLen = f.logs.length;
+      await expect(runSetup(args, f.env, f.io, f.context, oauth.hooks)).resolves.toBe(0);
+      expect(readFileSync(targetPath, "utf8")).toBe(raw);
+      expect(f.logs.slice(prevLogsLen).join("\n")).toContain("already matches");
+      expect(f.logs.slice(prevLogsLen)).not.toContain(SETUP_COPY.restart);
+    }
+  });
+
+  it("writes IDE configs BEFORE asking [Y/n] and supports y/Enter, n, retry, double-typo fallback, and Ctrl+C", async () => {
+    // 1. "y": config exists on disk before ask() is even called; loginWithBrowser runs after.
+    const fYes = universalFixture("linux");
+    const oauthYes = mockBrowserOAuth("https://dev-local.paymos.io", "approve");
+    const codexPath = defaultConfigPath("codex", fYes.env, fYes.context);
+    save(codexPath, "# keep\n");
+    const askYes = vi.fn(async () => {
+      expect(readFileSync(codexPath, "utf8")).toContain("connect");
+      return "y";
+    });
+    await expect(
+      runSetup(
+        ["--origin", "https://dev-local.paymos.io", "--token-file", fYes.tokenFile],
+        fYes.env,
+        { ...fYes.io, interactive: true, ask: askYes },
+        fYes.context,
+        oauthYes.hooks,
+      ),
+    ).resolves.toBe(0);
+    expect(askYes).toHaveBeenCalledTimes(1);
+    expect(oauthYes.getOpenCalls()).toBe(1);
+    expect(readTokenStore(fYes.tokenFile).origins["https://dev-local.paymos.io"]?.access_token).toBe("at_setup_oauth_1");
+    expect(fYes.logs.join("\n")).toContain(SETUP_COPY.restart);
+
+    // 2. "" (Enter): same browser login.
+    const fEnter = universalFixture("linux");
+    const oauthEnter = mockBrowserOAuth();
+    save(defaultConfigPath("cursor", fEnter.env, fEnter.context), "{}");
+    await expect(
+      runSetup(
+        ["--token-file", fEnter.tokenFile],
+        fEnter.env,
+        { ...fEnter.io, interactive: true, ask: async () => "" },
+        fEnter.context,
+        oauthEnter.hooks,
+      ),
+    ).resolves.toBe(0);
+    expect(oauthEnter.getOpenCalls()).toBe(1);
+
+    // 3. "n": keeps written config, 0 browser calls, logs referenceReady + restart, exits 0.
+    const fNo = universalFixture("linux");
+    const oauthNo = mockBrowserOAuth();
+    save(defaultConfigPath("cursor", fNo.env, fNo.context), '{"mcpServers":{}}');
+    await expect(
+      runSetup([], fNo.env, { ...fNo.io, interactive: true, ask: async () => "n" }, fNo.context, oauthNo.hooks),
+    ).resolves.toBe(0);
+    expect(oauthNo.getOpenCalls()).toBe(0);
+    expect(readFileSync(defaultConfigPath("cursor", fNo.env, fNo.context), "utf8")).toContain("connect");
+    expect(fNo.logs.join("\n")).toContain(SETUP_COPY.referenceReady);
+    expect(fNo.logs.join("\n")).toContain(SETUP_COPY.restart);
+
+    // 4. First typo then "yes": retries once via offerBrowserRetry, then logs in.
+    const fRetry = universalFixture("linux");
+    const oauthRetry = mockBrowserOAuth();
+    save(defaultConfigPath("cursor", fRetry.env, fRetry.context), "{}");
+    const prompts: string[] = [];
+    const answers = ["maybe", "yes"];
+    await expect(
+      runSetup(
+        ["--token-file", fRetry.tokenFile],
+        fRetry.env,
+        {
+          ...fRetry.io,
+          interactive: true,
+          ask: async label => {
+            prompts.push(label);
+            return answers.shift()!;
+          },
+        },
+        fRetry.context,
+        oauthRetry.hooks,
+      ),
+    ).resolves.toBe(0);
+    expect(prompts).toEqual([SETUP_COPY.offerBrowserAuth, SETUP_COPY.offerBrowserRetry]);
+    expect(oauthRetry.getOpenCalls()).toBe(1);
+
+    // 5. Two typos: second typo safely falls back to "n" -> exit 0, keeps config, 0 browser calls.
+    const fTwoTypos = universalFixture("linux");
+    const oauthTwoTypos = mockBrowserOAuth();
+    save(defaultConfigPath("cursor", fTwoTypos.env, fTwoTypos.context), "{}");
+    const typoAnswers = ["wat", "huh"];
+    await expect(
+      runSetup(
+        [],
+        fTwoTypos.env,
+        { ...fTwoTypos.io, interactive: true, ask: async () => typoAnswers.shift()! },
+        fTwoTypos.context,
+        oauthTwoTypos.hooks,
+      ),
+    ).resolves.toBe(0);
+    expect(oauthTwoTypos.getOpenCalls()).toBe(0);
+    expect(readFileSync(defaultConfigPath("cursor", fTwoTypos.env, fTwoTypos.context), "utf8")).toContain("connect");
+    expect(fTwoTypos.logs.join("\n")).toContain(SETUP_COPY.referenceReady);
+
+    // 6. Ctrl+C / EOF on [Y/n]: keeps written config, 0 browser calls, exits 0.
+    const fCtrlC = universalFixture("linux");
+    const oauthCtrlC = mockBrowserOAuth();
+    save(defaultConfigPath("cursor", fCtrlC.env, fCtrlC.context), "{}");
+    await expect(
+      runSetup(
+        [],
+        fCtrlC.env,
+        { ...fCtrlC.io, interactive: true, ask: async () => { throw new Error("SIGINT"); } },
+        fCtrlC.context,
+        oauthCtrlC.hooks,
+      ),
+    ).resolves.toBe(0);
+    expect(oauthCtrlC.getOpenCalls()).toBe(0);
+    expect(readFileSync(defaultConfigPath("cursor", fCtrlC.env, fCtrlC.context), "utf8")).toContain("connect");
+    expect(fCtrlC.logs.join("\n")).toContain(SETUP_COPY.referenceReady);
+  });
+
+  it("keeps written IDE configs when browser OAuth is cancelled (130) or fails (1)", async () => {
+    const fDeny = universalFixture("linux");
+    const oauthDeny = mockBrowserOAuth("https://app.paymos.io", "deny");
+    const cursorPath = defaultConfigPath("cursor", fDeny.env, fDeny.context);
+    save(cursorPath, "{}");
+    await expect(
+      runSetup(
+        ["--token-file", fDeny.tokenFile],
+        fDeny.env,
+        { ...fDeny.io, interactive: true, ask: async () => "y" },
+        fDeny.context,
+        oauthDeny.hooks,
+      ),
+    ).resolves.toBe(130);
+    expect(parseJson(readFileSync(cursorPath, "utf8")).mcpServers.paymos).toEqual({
+      command: "npx",
+      args: ["-y", "@paymos/mcp", "connect"],
+    });
+    expect(fDeny.logs.join("\n")).toContain(SETUP_COPY.loginSkippedAfterConfig);
+    expect(fDeny.logs.join("\n")).toContain(SETUP_COPY.restart);
+
+    const fFail = universalFixture("linux");
+    const oauthFail = mockBrowserOAuth("https://app.paymos.io", "fail_discovery");
+    const codexPath = defaultConfigPath("codex", fFail.env, fFail.context);
+    save(codexPath, 'model = "gpt-5"\n');
+    await expect(
+      runSetup(
+        ["--token-file", fFail.tokenFile],
+        fFail.env,
+        { ...fFail.io, interactive: true, ask: async () => "y" },
+        fFail.context,
+        oauthFail.hooks,
+      ),
+    ).resolves.toBe(1);
+    expect(parseToml(readFileSync(codexPath, "utf8")).mcp_servers).toEqual({
+      paymos: { command: "npx", args: ["-y", "@paymos/mcp", "connect"] },
+    });
+    expect(fFail.logs.join("\n")).toContain("auth_failed:");
+    expect(fFail.logs.join("\n")).toContain(SETUP_COPY.loginSkippedAfterConfig);
+  });
+
+  it("handles clean-PC zero detected clients, --no-login in TTY, --dry-run, Sandbox coexistence, and legacy HTTP upgrade", async () => {
+    // 1. Clean PC non-TTY falls back to claude-code + codex, exit 0, 0 browser calls.
+    const fClean = universalFixture("linux");
+    const oauthClean = mockBrowserOAuth();
+    await expect(runSetup([], fClean.env, fClean.io, fClean.context, oauthClean.hooks)).resolves.toBe(0);
+    expect(oauthClean.getOpenCalls()).toBe(0);
+    expect(parseJson(readFileSync(defaultConfigPath("claude-code", fClean.env, fClean.context), "utf8")).mcpServers.paymos)
+      .toEqual({ command: "npx", args: ["-y", "@paymos/mcp", "connect"] });
+    expect(parseToml(readFileSync(defaultConfigPath("codex", fClean.env, fClean.context), "utf8"))).toEqual({
+      mcp_servers: { paymos: { command: "npx", args: ["-y", "@paymos/mcp", "connect"] } },
+    });
+
+    // 2. Clean PC interactive TTY prompts chooseClient, then --no-login skips [Y/n] prompt.
+    const fCleanTty = universalFixture("linux");
+    const askChoose = vi.fn(async () => "glm");
+    await expect(
+      runSetup(["--no-login"], fCleanTty.env, { ...fCleanTty.io, interactive: true, ask: askChoose }, fCleanTty.context),
+    ).resolves.toBe(0);
+    expect(askChoose).toHaveBeenCalledTimes(1);
+    expect(parseJson(readFileSync(defaultConfigPath("zcode", fCleanTty.env, fCleanTty.context), "utf8")).mcp.servers.paymos)
+      .toEqual({ command: "npx", args: ["-y", "@paymos/mcp", "connect"] });
+
+    // 3. --dry-run creates no files and opens no browser.
+    const fDry = universalFixture("linux");
+    const oauthDry = mockBrowserOAuth();
+    await expect(
+      runSetup(["--client", "kimi", "--dry-run"], fDry.env, fDry.io, fDry.context, oauthDry.hooks),
+    ).resolves.toBe(0);
+    expect(existsSync(defaultConfigPath("kimi", fDry.env, fDry.context))).toBe(false);
+    expect(oauthDry.getOpenCalls()).toBe(0);
+    expect(fDry.logs.at(-1)).toContain("No files were changed");
+
+    // 4. Coexists with existing Sandbox entry under paymos-merchant and upgrades legacy HTTP entry.
+    const fCoexist = universalFixture("linux");
+    const cursorPath = defaultConfigPath("cursor", fCoexist.env, fCoexist.context);
+    const sandboxEntry = { command: "npx", args: ["-y", "@paymos/mcp"], env: { PAYMOS_CREDENTIALS_FILE: "sandbox.json" } };
+    save(cursorPath, '{\n// keep cursor\n"mcpServers":{"paymos":' + JSON.stringify(sandboxEntry) + '}}\n');
+    await expect(runSetup(["--client", "cursor"], fCoexist.env, fCoexist.io, fCoexist.context)).resolves.toBe(0);
+    const coexistRaw = readFileSync(cursorPath, "utf8");
+    expect(coexistRaw).toContain("// keep cursor");
+    expect(parseJson(coexistRaw)).toEqual({
+      mcpServers: {
+        paymos: sandboxEntry,
+        "paymos-merchant": { command: "npx", args: ["-y", "@paymos/mcp", "connect"] },
+      },
+    });
+  });
+
+  it("rejects mixing Sandbox key flags/env with universal connect flags and rejects invalid origins", async () => {
+    const f = universalFixture("linux");
+    const mixCases: Array<{ argv: string[]; testEnv: Record<string, string | undefined> }> = [
+      { argv: ["--sandbox", "--origin", "https://dev-local.paymos.io"], testEnv: f.env },
+      { argv: ["--sandbox", "--token-file", f.tokenFile], testEnv: f.env },
+      { argv: ["--sandbox", "--no-login"], testEnv: f.env },
+      { argv: ["--credentials-file", join(f.root, "keys.json"), "--origin", "https://dev-local.paymos.io"], testEnv: f.env },
+      { argv: ["--no-login"], testEnv: { ...f.env, PAYMOS_API_KEY_ID: "pk_test_1" } },
+      { argv: ["--origin", "https://dev-local.paymos.io"], testEnv: { ...f.env, PAYMOS_API_SECRET: "sk_test_1" } },
+      { argv: ["--token-file", f.tokenFile], testEnv: { ...f.env, PAYMOS_CREDENTIALS_FILE: join(f.root, "k.json") } },
+    ];
+    for (const item of mixCases) {
+      await expect(runSetup(item.argv, item.testEnv, f.io, f.context)).rejects.toThrow(SETUP_COPY.errors.arguments);
+    }
+
+    await expect(
+      runSetup(["--client", "codex", "--origin", "http://evil.paymos.io"], f.env, f.io, f.context),
+    ).rejects.toThrow(/^invalid_origin:/);
   });
 });

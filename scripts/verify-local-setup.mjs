@@ -64,6 +64,11 @@ const config = JSON.parse(readFileSync(clientConfig, "utf8"));
 assert.equal(config.mcpServers.paymos.env.PAYMOS_CREDENTIALS_FILE, credentialFile);
 assert(!readFileSync(clientConfig, "utf8").includes(secret));
 assert.equal(JSON.parse(readFileSync(credentialFile, "utf8")).apiSecret, secret);
+const sandboxFlagRepeat = run(
+  ["exec", "--offline", "--no", "--", "paymos-mcp", "setup", "--sandbox", ...args.slice(1)],
+  { cwd: temp, env: isolatedEnv },
+);
+assert.match(sandboxFlagRepeat.stdout, /already matches/);
 
 // Local stdio handshake, list and signature verification; no API fetch is made.
 const launcher = config.mcpServers.paymos;
@@ -93,13 +98,17 @@ try {
 assert.match(stderr, /sandbox session ready/);
 assert(!stderr.includes(secret) && !stderr.includes(webhookSecret));
 
-// Packed Merchant MCP bridge smoke (`connect` initialize + 188 tools without browser login).
+// Packed Merchant MCP bridge smoke (`connect` initialize + 27 docs + 191 tools + offline advisor/status without browser login).
 const connectTokenFile = join(temp, "oauth-private", "merchant-oauth.json");
+const connectEnv = { ...isolatedEnv };
+delete connectEnv.PAYMOS_API_KEY_ID;
+delete connectEnv.PAYMOS_API_SECRET;
+delete connectEnv.PAYMOS_CREDENTIALS_FILE;
 const connectTransport = new StdioClientTransport({
   command: process.execPath,
   args: [bin, "connect", "--token-file", connectTokenFile],
   cwd: temp,
-  env: isolatedEnv,
+  env: connectEnv,
   stderr: "pipe",
 });
 let connectStderr = "";
@@ -108,13 +117,53 @@ const connectClient = new Client({ name: "paymos-offline-connect-check", version
 try {
   await connectClient.connect(connectTransport);
   await connectClient.ping();
+  const instructions = connectClient.getInstructions() ?? "";
+  assert.match(instructions, /paymos_auth_status/);
+  assert.match(instructions, /recommend_payment_integration/);
+  assert.match(instructions, /verify_webhook_signature/);
+
+  const connectResources = (await connectClient.listResources()).resources;
+  assert.equal(connectResources.length, 27);
+  const docUris = new Set(connectResources.map(resource => resource.uri));
+  assert.equal(docUris.size, 27);
+  assert(docUris.has("paymos://docs/overview"));
+  assert(docUris.has("paymos://docs/cms-woocommerce"));
+  assert(docUris.has("paymos://docs/webhooks-verify"));
+  const readDoc = await connectClient.readResource({ uri: "paymos://docs/cms-woocommerce" });
+  assert.equal(readDoc.contents[0]?.mimeType, "text/html");
+  assert((readDoc.contents[0]?.text ?? "").trim().length > 200);
+
   const listed = (await connectClient.listTools()).tools;
-  assert.equal(listed.length, 188);
-  const catalog = JSON.parse(readFileSync(join(root, "scripts", "merchant-tools-catalog.json"), "utf8"));
+  assert.equal(listed.length, 191);
   assert.deepEqual(
-    listed.map(t => ({ name: t.name, description: t.description ?? "", inputSchema: t.inputSchema })),
+    listed.slice(0, 3).map(t => t.name),
+    ["paymos_auth_status", "recommend_payment_integration", "verify_webhook_signature"],
+  );
+  const catalog = JSON.parse(readFileSync(join(root, "scripts", "merchant-tools-catalog.json"), "utf8"));
+  assert.equal(catalog.length, 188);
+  assert.deepEqual(
+    listed.slice(3).map(t => ({ name: t.name, description: t.description ?? "", inputSchema: t.inputSchema })),
     catalog,
   );
+
+  const authStatusRes = await connectClient.callTool({ name: "paymos_auth_status", arguments: {} });
+  assert.notEqual(authStatusRes.isError, true);
+  const authStatus = JSON.parse(authStatusRes.content[0].text);
+  assert.equal(authStatus.signed_in, false);
+  assert.equal(authStatus.session_state, "none");
+  assert.equal(authStatus.origin, "https://app.paymos.io");
+  assert.equal(authStatus.mode, "reference_only");
+  assert.equal(authStatus.setup_command, "npx -y @paymos/mcp setup");
+
+  const advisorRes = await connectClient.callTool({
+    name: "recommend_payment_integration",
+    arguments: { scenario: "cms_plugin", platform_or_cms: "woocommerce" },
+  });
+  assert.notEqual(advisorRes.isError, true);
+  const advisor = JSON.parse(advisorRes.content[0].text);
+  assert.equal(advisor.recommendation, "cms_plugin");
+  assert.equal(advisor.detected_cms.id, "woocommerce");
+  assert.equal(advisor.detected_cms.doc_uri, "paymos://docs/cms-woocommerce");
 } finally {
   await connectClient.close();
 }
@@ -126,6 +175,37 @@ const badOrigin = spawnSync(process.execPath, [bin, "connect", "--origin", "http
 });
 assert.notEqual(badOrigin.status, 0);
 assert.match(badOrigin.stderr, /invalid_origin/);
+
+// Packed `paymos-mcp setup --no-login` smoke in isolated home for antigravity and glm -> zcode.
+const setupHome = join(temp, "setup-home");
+const setupEnv = {
+  ...isolatedEnv,
+  HOME: setupHome,
+  USERPROFILE: setupHome,
+  APPDATA: join(setupHome, "AppData", "Roaming"),
+  XDG_CONFIG_HOME: join(setupHome, ".config"),
+};
+delete setupEnv.PAYMOS_API_KEY_ID;
+delete setupEnv.PAYMOS_API_SECRET;
+delete setupEnv.PAYMOS_CREDENTIALS_FILE;
+mkdirSync(setupHome, { recursive: true });
+
+const setupAg = run(["exec", "--offline", "--no", "--", "paymos-mcp", "setup", "--client", "antigravity", "--no-login"], {
+  cwd: temp, env: setupEnv,
+});
+assert.match(setupAg.stdout, /offline reference and integration-advisor mode/i);
+const setupAntigravityConfig = JSON.parse(readFileSync(join(setupHome, ".gemini", "config", "mcp_config.json"), "utf8"));
+assert(setupAntigravityConfig.mcpServers.paymos);
+assert(JSON.stringify(setupAntigravityConfig.mcpServers.paymos).includes("connect"));
+assert(!existsSync(join(setupHome, ".config", "paymos", "mcp", "credentials.json")));
+
+const setupGlm = run(["exec", "--offline", "--no", "--", "paymos-mcp", "setup", "--client", "glm", "--no-login"], {
+  cwd: temp, env: setupEnv,
+});
+assert.match(setupGlm.stdout, /offline reference and integration-advisor mode/i);
+const setupZcodeConfig = JSON.parse(readFileSync(join(setupHome, ".zcode", "cli", "config.json"), "utf8"));
+assert(setupZcodeConfig.mcp.servers.paymos);
+assert(JSON.stringify(setupZcodeConfig.mcp.servers.paymos).includes("connect"));
 
 // Packed `paymos-mcp auth --no-login` smoke in isolated home for antigravity and glm -> zcode.
 const authHome = join(temp, "auth-home");
@@ -151,6 +231,6 @@ const zcodeConfig = JSON.parse(readFileSync(join(authHome, ".zcode", "cli", "con
 assert(zcodeConfig.mcp.servers.paymos);
 assert(JSON.stringify(zcodeConfig.mcp.servers.paymos).includes("connect"));
 
-console.log(JSON.stringify({ packageSmoke: "pass", tools: 15, merchantTools: 188, resources: 5, privateFile: true,
-  installedBinSetup: "pass", installedBinAuth: "pass", connectSmoke: "pass",
+console.log(JSON.stringify({ packageSmoke: "pass", tools: 15, merchantTools: 188, connectTools: 191, resources: 5, connectResources: 27, privateFile: true,
+  installedBinSetup: "pass", installedBinSetupConnect: "pass", installedBinAuth: "pass", connectSmoke: "pass",
   configuredLauncher: "pass", repeat: "pass", help: "pass", signatureFromFile: "pass", networkTests: "not run" }));

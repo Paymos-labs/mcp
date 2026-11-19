@@ -5,11 +5,15 @@ import { fileURLToPath } from "node:url";
 import { parse as parseJson } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildConnectEntry, detectInstalledClients, runAuth } from "../src/auth.js";
+import {
+  buildConnectEntry, detectInstalledClients, planConnectTargets,
+  publishConnectPlans, resolveClientsForSetup, runAuth,
+} from "../src/auth.js";
 import { loadCredentials } from "../src/config.js";
 import { main } from "../src/index.js";
 import { readTokenStore } from "../src/oauth-session.js";
 import { defaultConfigPath } from "../src/setup.js";
+import { AUTH_COPY, SETUP_COPY } from "../src/setup-copy.js";
 import { DestinationBusyError, LOCK_SUFFIX, STALE_LOCK_MS, withDestinationLock } from "../src/setup-lock.js";
 
 vi.mock("../src/config.js", async importOriginal => ({
@@ -398,9 +402,53 @@ describe("paymos unified auth", process.platform === "win32" ? { timeout: 25_000
     const output = vi.spyOn(console, "log").mockImplementation(() => {});
     await expect(main({}, ["auth", "--help"])).resolves.toBeUndefined();
     expect(output).toHaveBeenCalledWith(expect.stringContaining("npx -y @paymos/mcp auth"));
+    await expect(main({}, ["setup", "--help"])).resolves.toBeUndefined();
+    expect(output).toHaveBeenCalledWith(expect.stringContaining("npx -y @paymos/mcp setup"));
     const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     await expect(main({}, ["connect", "--help"])).resolves.toBeUndefined();
     expect(stdoutSpy).toHaveBeenCalledWith(expect.stringContaining("npx -y @paymos/mcp connect"));
     expect(loadCredentials).not.toHaveBeenCalled();
+  });
+
+  it("exposes shared connect planning/publishing helpers and executes main(['setup', ...]) parity", async () => {
+    const f = fixture("linux");
+    const clients = await resolveClientsForSetup(
+      { fallbackClients: ["claude-code", "codex"] },
+      f.env,
+      f.io,
+      f.context,
+    );
+    expect(clients).toEqual(["claude-code", "codex"]);
+
+    const plans = planConnectTargets(clients!, undefined, "https://app.paymos.io", f.env, f.context);
+    expect(plans).toHaveLength(2);
+
+    const first = publishConnectPlans(plans, f.io, f.context);
+    expect(first).toEqual({ wroteAny: true });
+    expect(f.logs).not.toContain(AUTH_COPY.restart);
+    expect(f.logs).not.toContain(SETUP_COPY.restart);
+
+    const secondPlans = planConnectTargets(clients!, undefined, "https://app.paymos.io", f.env, f.context);
+    const second = publishConnectPlans(secondPlans, f.io, f.context);
+    expect(second).toEqual({ wroteAny: false });
+
+    // main(env, ["setup", ...]) runs universal zero-key setup without touching loadCredentials.
+    const explicitConfig = join(f.root, "main-setup", "mcp.json");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const prevExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await expect(
+        main(f.env, ["setup", "--client", "generic", "--config", explicitConfig, "--no-login"]),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBeUndefined();
+      expect(parseJson(readFileSync(explicitConfig, "utf8")).mcpServers.paymos).toEqual(
+        buildConnectEntry("generic", "https://app.paymos.io", process.platform),
+      );
+      expect(logSpy.mock.calls.flat().join("\n")).toContain(SETUP_COPY.referenceReady);
+      expect(loadCredentials).not.toHaveBeenCalled();
+    } finally {
+      process.exitCode = prevExitCode;
+    }
   });
 });

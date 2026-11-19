@@ -1,40 +1,81 @@
 # @paymos/mcp
 
-Paymos offers a local Sandbox server for integration testing and a hosted MCP connection for your merchant account.
+Official Paymos MCP server: connect your AI IDE or CLI to offline Paymos integration docs and advisor tools immediately, plus optional OAuth sign-in to your Paymos merchant account (`191` tools total in `connect`) or key-based Local Sandbox (`--sandbox`).
 
-## Connect a merchant account
+## Quick setup (recommended)
 
-Connect any supported AI IDE or CLI to your Paymos merchant account with one command and no API keys:
-
-```bash
-npx -y @paymos/mcp auth
-```
-
-`auth` automatically detects installed clients (`antigravity`, `claude-code`, `codex`, `kimi`, `zcode`/`glm`, `cursor`, `windsurf`, `opencode`, `claude-desktop`, and project `.vscode`), opens Paymos in your browser for OAuth 2.1 PKCE `S256` sign-in (`merchant:mcp` and `offline_access`), saves your OAuth session under OS-protected permissions outside IDE configs (`%APPDATA%\Paymos\mcp\merchant-oauth.json` on Windows, `$XDG_CONFIG_HOME/paymos/mcp/merchant-oauth.json` on Unix), and configures the local stdio OAuth bridge (`@paymos/mcp connect`). If a local Sandbox entry already occupies `paymos`, Merchant MCP is configured side-by-side as `paymos-merchant`.
-
-Dashboard → Developers → Agents shows connection status, activity, recent operations and the Disconnect action.
-
-### Paymos command
+Configure any supported AI IDE or CLI with one command and no API keys:
 
 ```bash
-npx -y @paymos/mcp auth
-npx -y @paymos/mcp auth --client antigravity
-npx -y @paymos/mcp auth --client glm
-npx -y @paymos/mcp auth --client codex
-npx -y @paymos/mcp auth --client claude-code
+npx -y @paymos/mcp setup
 ```
 
-Options for `auth`:
+`setup` requires **Node.js 22.12 or later** and runs a zero-key setup-first flow:
+
+1. Automatically detects installed MCP clients (`antigravity`, `claude-code`, `codex`, `kimi`, `zcode`/`glm`, `cursor`, `windsurf`, `opencode`, `claude-desktop`, and project `.vscode`), or asks in an interactive terminal if none are detected (`claude-code` and `codex` fallback in non-interactive terminals).
+2. Writes the local stdio bridge (`@paymos/mcp connect`) configuration first, preserving other servers and comments. If a local Sandbox entry already occupies `paymos`, Merchant MCP is configured side-by-side as `paymos-merchant`.
+3. Optionally offers browser OAuth 2.1 PKCE `S256` sign-in (`[Y/n]`, scopes `merchant:mcp` and `offline_access`).
+   - **Decline (`n`), pass `--no-login`, or run non-interactively:** `setup` exits `0` and leaves Paymos ready in **offline reference & integration-advisor mode** (`27` compiled `paymos://docs/*` resources + `paymos_auth_status`, `recommend_payment_integration`, and `verify_webhook_signature` with zero network calls or browser popups).
+   - **Accept (`Y` / Enter):** opens your browser to approve access and stores OAuth tokens under OS-protected permissions outside IDE configs (`%APPDATA%\Paymos\mcp\merchant-oauth.json` on Windows, `$XDG_CONFIG_HOME/paymos/mcp/merchant-oauth.json` on Unix). Even if browser sign-in is cancelled or fails, your IDE configuration remains saved for offline reference mode.
+
+Dashboard → Developers → Agents shows active connections, activity, recent operations, and Disconnect.
+
+### Supported clients and examples
+
+```bash
+npx -y @paymos/mcp setup
+npx -y @paymos/mcp setup --client antigravity
+npx -y @paymos/mcp setup --client glm
+npx -y @paymos/mcp setup --client codex
+npx -y @paymos/mcp setup --client claude-code
+npx -y @paymos/mcp setup --client antigravity --no-login
+```
+
+| Client | `--client` value | Default configuration |
+|---|---|---|
+| Codex | `codex` | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` |
+| Claude Code | `claude-code` | `~/.claude.json` |
+| Claude Desktop | `claude-desktop` | Claude's macOS or Windows configuration |
+| Antigravity | `antigravity` | `~/.gemini/config/mcp_config.json` |
+| Kimi CLI | `kimi` | `$KIMI_CODE_HOME/mcp.json` or `~/.kimi-code/mcp.json` |
+| ZCode / GLM | `zcode` (alias `glm`) | `~/.zcode/cli/config.json` |
+| Cursor | `cursor` | `~/.cursor/mcp.json` |
+| Windsurf | `windsurf` | `~/.codeium/windsurf/mcp_config.json` |
+| OpenCode | `opencode` | `OPENCODE_CONFIG`, or the user configuration under `$XDG_CONFIG_HOME/opencode` or `~/.config/opencode` |
+| VS Code | `vscode` | `.vscode/mcp.json` in the current directory |
+| Another client | `generic` | Explicit `--config PATH` required |
+
+For OpenCode, setup uses an existing `opencode.jsonc` before `opencode.json`. To use a different configuration for any client, pass `--config PATH`. Claude Desktop on other operating systems needs an explicit path. Cline, Roo Code, and custom clients can use `--client generic --config PATH` with the MCP configuration path shown by that client.
+
+To preview proposed changes without modifying files or signing in:
+
+```bash
+npx -y @paymos/mcp setup --client codex --dry-run
+```
+
+Kimi CLI is a client, distinct from the Kimi model. GLM, Kimi, and custom models can use Paymos through an MCP client if both the client and chosen model support tool calling. Setup does not change your model. For example, [Z.ai explains how to run GLM in Claude Code](https://docs.z.ai/devpack/tool/claude); add Paymos using the Claude Code adapter after configuring the model.
+
+### `setup` options
+
 - `--client NAME`: `codex`, `claude-code`, `claude-desktop`, `antigravity`, `kimi`, `zcode` (or alias `glm`), `cursor`, `windsurf`, `opencode`, `vscode`, or `generic`
 - `--config PATH`: explicit client configuration path (required for `generic`)
 - `--origin URL`: custom Paymos origin (`https://...` or loopback `http://127.0.0.1` / `http://localhost`, default `https://app.paymos.io`)
 - `--token-file PATH`: custom OAuth token store path
-- `--no-login`: write client configurations without opening browser login
+- `--no-login`: write client configurations without offering browser OAuth sign-in
+- `--sandbox`: activate key-based Local Sandbox setup (`credentials.json`); cannot be combined with `--origin`, `--token-file`, or `--no-login`
+- `--credentials-file PATH`: separate file for Sandbox test credentials (implies `--sandbox`)
 - `--dry-run`: preview target files without signing in or writing
+- `--help`, `-h`: show command usage
+
+You can also run `npx -y @paymos/mcp auth` directly to sign in immediately via browser OAuth and configure clients (supporting `--client`, `--config`, `--origin`, `--token-file`, `--no-login`, and `--dry-run`).
 
 ### Local OAuth bridge (`connect`)
 
-Configured clients launch `npx -y @paymos/mcp connect` (or `cmd /d /c npx -y @paymos/mcp connect` on Windows). `connect` responds to MCP startup requests (`initialize`, `ping`, `tools/list`, `resources/list`, `prompts/list`) locally without blocking IDE startup, triggers browser OAuth lazily on `tools/call` when needed, and transparently refreshes expired access tokens.
+Configured clients launch `npx -y @paymos/mcp connect` (or `cmd /d /c npx -y @paymos/mcp connect` on Windows). `connect`:
+
+- Sends `instructions` on `initialize`, serves all `27` compiled `paymos://docs/*` pages locally on `resources/list` and `resources/read`, and exposes `191` tools (`3` local offline tools + `188` merchant account and Sandbox tools) on `tools/list` without blocking IDE startup.
+- Executes `paymos_auth_status`, `recommend_payment_integration`, and `verify_webhook_signature` 100% locally with zero network calls and zero browser popups.
+- Triggers browser OAuth PKCE `S256` lazily only when calling an account or Sandbox API tool (`get_connection_status`, `merchant_*`, `playground_*`) without a valid session, and transparently refreshes expired access tokens.
 
 ### Direct URL connectors (cloud / native OAuth clients)
 
@@ -56,65 +97,47 @@ Pass the first command’s `request_id` and `challenge` as the tool’s `deliver
 
 Withdrawals follow the merchant’s current policy and native approval rules. Manage withdrawal whitelist addresses from the dashboard.
 
-## Local Sandbox
+## Local Sandbox (`--sandbox`)
 
-The local stdio server provides 14 tools and five documentation resources for creating and simulating test invoices, checking invoice states and verifying webhook signatures. It signs API requests with the official SDK using a test Payment key pair.
+If you prefer a key-based local stdio server exclusively for Sandbox API calls, pass `--sandbox` (or `--credentials-file` / `PAYMOS_API_*` environment variables). It provides `15` tools (`recommend_payment_integration`, `verify_webhook_signature`, and `13` Sandbox invoice/payment-channel tools) plus `5` documentation resources, signing API requests with a test Payment key pair (`pk_test_…` and `sk_test_…`) via `@paymos/sdk`.
 
 ### Requirements
 
-- Requires Node.js 22.12 or later.
+- Node.js 22.12 or later
 - A Paymos merchant account with a test key pair from Dashboard → Developer → API Keys (`pk_test_…` and `sk_test_…`)
 - An MCP client that can launch a local stdio server
 
-### Setup the local server
+### Setup the local Sandbox server
 
 Run:
 
 ```bash
-npx -y @paymos/mcp setup
+npx -y @paymos/mcp setup --sandbox
+```
+
+Or specify the client directly:
+
+```bash
+npx -y @paymos/mcp setup --sandbox --client codex
 ```
 
 Choose your client and enter your test key pair. Secret input is hidden. You can also supply a webhook secret for signature verification or press Enter to skip it. If the values are already in your environment, setup reads `PAYMOS_API_KEY_ID`, `PAYMOS_API_SECRET`, and optional `PAYMOS_WEBHOOK_SECRET`.
 
-You can select the client in the command:
-
-```bash
-npx -y @paymos/mcp setup --client codex
-```
-
-| Client | `--client` value | Default configuration |
-|---|---|---|
-| Codex | `codex` | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` |
-| Claude Code | `claude-code` | `~/.claude.json` |
-| Claude Desktop | `claude-desktop` | Claude's macOS or Windows configuration |
-| Antigravity | `antigravity` | `~/.gemini/config/mcp_config.json` |
-| Kimi CLI | `kimi` | `$KIMI_CODE_HOME/mcp.json` or `~/.kimi-code/mcp.json` |
-| ZCode / GLM | `zcode` (alias `glm`) | `~/.zcode/cli/config.json` |
-| Cursor | `cursor` | `~/.cursor/mcp.json` |
-| Windsurf | `windsurf` | `~/.codeium/windsurf/mcp_config.json` |
-| OpenCode | `opencode` | `OPENCODE_CONFIG`, or the user configuration under `$XDG_CONFIG_HOME/opencode` or `~/.config/opencode` |
-| VS Code | `vscode` | `.vscode/mcp.json` in the current directory |
-| Another client | `generic` | Explicit `--config PATH` required |
-
-For OpenCode, setup uses an existing `opencode.jsonc` before `opencode.json`. To use a different configuration for any client, pass `--config PATH`. Claude Desktop on other operating systems needs an explicit path. Cline, Roo Code, and custom clients can use `--client generic --config PATH` with the MCP configuration path shown by that client.
-
 Setup saves credentials separately, by default in `$XDG_CONFIG_HOME/paymos/mcp/credentials.json` or `~/.config/paymos/mcp/credentials.json` when `XDG_CONFIG_HOME` is unset. Use `--credentials-file PATH` to choose another location outside your project. The client entry contains only `PAYMOS_CREDENTIALS_FILE` with that path; it does not contain your keys. Keep the credentials file out of version control.
 
-To preview the proposed changes, run:
+To preview the proposed Sandbox changes, run:
 
 ```bash
-npx -y @paymos/mcp setup --client codex --dry-run
+npx -y @paymos/mcp setup --sandbox --client codex --dry-run
 ```
 
 Dry-run writes no files and prints no secrets. Repeating setup with the same data does not add a duplicate entry. If existing Paymos settings or credentials differ, setup refuses to overwrite them so you can review the conflict. Other servers, comments, models, and client settings are preserved. An older Paymos entry with inline key environment variables also causes a conflict; setup does not migrate it automatically.
 
-Restart or reconnect your MCP client after setup, then look for Paymos in its server list. Try asking the agent to create a sandbox invoice and simulate payment. Use `npx -y @paymos/mcp setup --help` for the full option list. Without an interactive terminal, provide `--client` and the required key environment variables; setup cannot ask for missing values there.
-
-Kimi CLI is a client, distinct from the Kimi model. GLM, Kimi, and custom models can use Paymos through an MCP client if both the client and chosen model support tool calling. Setup does not change your model. For example, [Z.ai explains how to run GLM in Claude Code](https://docs.z.ai/devpack/tool/claude); add Paymos using the Claude Code adapter after configuring the model.
+Restart or reconnect your MCP client after setup, then look for Paymos in its server list. Use `npx -y @paymos/mcp setup --help` for the full option list. Without an interactive terminal, `--sandbox` requires `--client` and the required key environment variables (`PAYMOS_API_KEY_ID` and `PAYMOS_API_SECRET`).
 
 ## Manual configuration
 
-Create a credentials file outside the project:
+For zero-key OAuth bridge mode (`connect`), configure your client to run `npx -y @paymos/mcp connect` (no `PAYMOS_CREDENTIALS_FILE` needed). For key-based Local Sandbox (`--sandbox`), first create a credentials file outside the project:
 
 ```json
 {
@@ -124,7 +147,7 @@ Create a credentials file outside the project:
 }
 ```
 
-`webhookSecret` is optional. On Unix, run `chmod 600 /absolute/path/credentials.json` after saving, using the actual absolute path. On Windows, keep the file in your account directory and check its existing access permissions. In the examples below, replace `/absolute/path/credentials.json` with the file's absolute path, and preserve your existing client settings.
+`webhookSecret` is optional. On Unix, run `chmod 600 /absolute/path/credentials.json` after saving, using the actual absolute path. On Windows, keep the file in your account directory and check its existing access permissions. In the examples below, replace `/absolute/path/credentials.json` with the file's absolute path (or omit `env` and append `"connect"` to `args` for OAuth bridge mode), and preserve your existing client settings.
 
 ### Claude Code, Claude Desktop, Kimi CLI, Cursor, Windsurf, and generic clients
 
@@ -133,20 +156,27 @@ Create a credentials file outside the project:
   "mcpServers": {
     "paymos": {
       "command": "npx",
-      "args": ["-y", "@paymos/mcp"],
-      "env": {
-        "PAYMOS_CREDENTIALS_FILE": "/absolute/path/credentials.json"
-      }
+      "args": ["-y", "@paymos/mcp", "connect"]
     }
   }
 }
 ```
+
+For `--sandbox` mode with a credentials file, pass `"args": ["-y", "@paymos/mcp"]` and `"env": { "PAYMOS_CREDENTIALS_FILE": "/absolute/path/credentials.json" }`.
 
 Use the locations in the setup table. Claude Code also accepts a project `.mcp.json`. Claude Desktop uses `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS and `%APPDATA%\Claude\claude_desktop_config.json` on Windows. Cline and Roo Code show their configuration through MCP Servers → Configure.
 
 ### Codex
 
 Add to `config.toml`:
+
+```toml
+[mcp_servers.paymos]
+command = "npx"
+args = ["-y", "@paymos/mcp", "connect"]
+```
+
+For `--sandbox` mode:
 
 ```toml
 [mcp_servers.paymos]
@@ -164,10 +194,7 @@ PAYMOS_CREDENTIALS_FILE = "/absolute/path/credentials.json"
   "mcp": {
     "paymos": {
       "type": "local",
-      "command": ["npx", "-y", "@paymos/mcp"],
-      "environment": {
-        "PAYMOS_CREDENTIALS_FILE": "/absolute/path/credentials.json"
-      },
+      "command": ["npx", "-y", "@paymos/mcp", "connect"],
       "enabled": true
     }
   }
@@ -184,10 +211,7 @@ Add to `.vscode/mcp.json` or your user MCP configuration:
     "paymos": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@paymos/mcp"],
-      "env": {
-        "PAYMOS_CREDENTIALS_FILE": "/absolute/path/credentials.json"
-      }
+      "args": ["-y", "@paymos/mcp", "connect"]
     }
   }
 }
@@ -202,10 +226,7 @@ Zed requires manual configuration; setup has no Zed adapter. On Unix, use `~/.co
   "context_servers": {
     "paymos": {
       "command": "npx",
-      "args": ["-y", "@paymos/mcp"],
-      "env": {
-        "PAYMOS_CREDENTIALS_FILE": "/absolute/path/credentials.json"
-      }
+      "args": ["-y", "@paymos/mcp", "connect"]
     }
   }
 }
@@ -217,18 +238,28 @@ For each manual example, use this launcher on Windows:
 
 ```json
 "command": "cmd",
-"args": ["/d", "/c", "npx", "-y", "@paymos/mcp"]
+"args": ["/d", "/c", "npx", "-y", "@paymos/mcp", "connect"]
 ```
 
-OpenCode uses a single array: `"command": ["cmd", "/d", "/c", "npx", "-y", "@paymos/mcp"]`. For Codex TOML, set `command = "cmd"` and use the same argument array. Setup selects the Windows launcher automatically.
+OpenCode uses a single array: `"command": ["cmd", "/d", "/c", "npx", "-y", "@paymos/mcp", "connect"]`. For Codex TOML, set `command = "cmd"` and use the same argument array. Setup selects the Windows launcher automatically.
 
 ### Existing credential options
 
-The server still reads `PAYMOS_API_KEY_ID`, `PAYMOS_API_SECRET`, and optional `PAYMOS_WEBHOOK_SECRET` directly. The `--api-key-id` and `--api-secret` flags also remain available. Environment values take priority over flags, which take priority over fields in the credentials file. Avoid putting secrets in command history or tracked configuration.
+In `--sandbox` mode, the server still reads `PAYMOS_API_KEY_ID`, `PAYMOS_API_SECRET`, and optional `PAYMOS_WEBHOOK_SECRET` directly. The `--api-key-id` and `--api-secret` flags also remain available. Environment values take priority over flags, which take priority over fields in the credentials file. Avoid putting secrets in command history or tracked configuration.
 
 ## Tools
 
+### Local offline tools in `connect` (`3` offline + `188` merchant tools = `191` total)
 
+| Tool | Purpose |
+|---|---|
+| `paymos_auth_status` | Read local Paymos OAuth sign-in state (`active`, `refreshable`, `none`) and active origin with zero network calls or browser launch |
+| `recommend_payment_integration` | Offline integration advisor covering `cms_plugin` (12 official CMS plugins), `checkout_widget`, `pos_terminal`, `order_checkout`, `repeat_deposits`, `both`, and `unsure`, plus SDKs, supported networks/assets, and webhook rules |
+| `verify_webhook_signature` | Verify `X-Webhook-Signature` against the raw webhook body locally using `@paymos/sdk` (supports dual-`v1=` secret rotation; uses `secret` or `PAYMOS_WEBHOOK_SECRET`) |
+
+When signed in (or on first call after lazy OAuth), `connect` also exposes `188` merchant account and Sandbox tools (`get_connection_status`, `merchant_*`, `playground_*`).
+
+### Local Sandbox (`--sandbox`) tools (`15` total)
 
 | Tool | Purpose |
 |---|---|
@@ -258,7 +289,12 @@ Tool errors use `{ "code": "paymos/<api_error_code>", "message": "…" }`. Sandb
 
 ## Resources
 
-Five documentation pages are available inside the MCP session:
+In `connect` mode, `27` documentation pages (`CONNECT_DOC_RESOURCES`) are compiled at build time and served locally via `resources/list` and `resources/read` without network access or OAuth:
+
+- Core & checkout: `paymos://docs/overview`, `paymos://docs/quick-start`, `paymos://docs/payment-flow`, `paymos://docs/hosted-checkout`, `paymos://docs/supported-currencies`, `paymos://docs/widget-sdk`, `paymos://docs/widget-terminal`, `paymos://docs/server-sdks`, `paymos://docs/api-keys`, `paymos://docs/webhooks`, `paymos://docs/webhooks-verify`, `paymos://docs/testing-sandbox`, `paymos://docs/payment-channels-create`, `paymos://docs/payment-channel-deposits-list`, `paymos://docs/errors`
+- Official CMS plugins (`12`): `paymos://docs/cms-woocommerce`, `paymos://docs/cms-whmcs`, `paymos://docs/cms-prestashop`, `paymos://docs/cms-magento2`, `paymos://docs/cms-opencart`, `paymos://docs/cms-shopware6`, `paymos://docs/cms-cscart`, `paymos://docs/cms-easy-digital-downloads`, `paymos://docs/cms-drupal-commerce`, `paymos://docs/cms-hikashop`, `paymos://docs/cms-givewp`, `paymos://docs/cms-odoo`
+
+In `--sandbox` mode, five documentation pages (`DOC_RESOURCES`) remain available inside the MCP session:
 
 - `paymos://docs/quick-start`
 - `paymos://docs/hosted-checkout`
@@ -268,9 +304,9 @@ Five documentation pages are available inside the MCP session:
 
 ## Sandbox and credentials
 
-The server opens no network listener and calls the Merchant API through `@paymos/sdk`. Setup output does not print secret values. Check your chosen client and model provider's logging settings separately. Setup stores keys in a separate local file; on Unix, new credential files use mode `0600` in a private directory. On Windows, access follows the account directory's permissions; the file is not encrypted by setup.
+The server opens no network listener (outside the temporary loopback callback during browser OAuth) and calls the Merchant API through `@paymos/sdk` in `--sandbox` mode. Setup output does not print secret values. Check your chosen client and model provider's logging settings separately. Setup stores OAuth tokens and Sandbox keys in separate local files; on Unix, new credential and token files use mode `0600` in a private directory. On Windows, access follows the account directory's permissions; the file is not encrypted by setup.
 
-Live (`pk_live_`/`sk_live_`) and payout (`rk_…`) keys are rejected during setup, at server startup, and on tool calls. After checking your integration in the sandbox, run your own application with its live keys. This local MCP server stays outside production payment paths.
+In `--sandbox` mode, live (`pk_live_`/`sk_live_`) and payout (`rk_…`) keys are rejected during setup, at server startup, and on tool calls. After checking your integration in the sandbox, run your own application with its live keys. The `--sandbox` server stays outside production payment paths.
 
 ## Development
 

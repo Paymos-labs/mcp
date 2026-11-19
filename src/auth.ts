@@ -218,11 +218,26 @@ export function detectInstalledClients(context: SetupContext, env: Env = {}): Se
   return detected;
 }
 
-interface TargetPlan {
+export interface TargetPlan {
   readonly client: SetupClient;
   readonly name: EntryName;
   readonly before: Snapshot;
   readonly next: string;
+}
+
+export interface ResolveClientsOptions {
+  readonly client?: string | undefined;
+  readonly config?: string | undefined;
+  readonly fallbackClients?: readonly SetupClient[] | undefined;
+}
+
+export interface PublishPlansResult {
+  readonly wroteAny: boolean;
+}
+
+export interface PublishPlanCopy {
+  readonly unchanged: (client: SetupClient, path: string, name: EntryName) => string;
+  readonly configured: (client: SetupClient, path: string, name: EntryName) => string;
 }
 
 function planTargetClient(
@@ -318,6 +333,104 @@ function resolveTargetPath(
   }
 }
 
+async function promptForClient(io: SetupIO): Promise<SetupClient[] | null> {
+  if (!io.interactive) fail("client_required");
+  let chosenRaw: string;
+  try {
+    chosenRaw = (await io.ask(`${AUTH_COPY.chooseClient} (${SETUP_CLIENTS.join(", ")})`, false)).trim();
+  } catch {
+    return null;
+  }
+  const chosen = normalizeClientName(chosenRaw);
+  if (!chosen) fail("client_required");
+  return [chosen];
+}
+
+export async function resolveClientsForSetup(
+  options: ResolveClientsOptions,
+  env: Env,
+  io: SetupIO,
+  context: SetupContext,
+): Promise<SetupClient[] | null> {
+  if (options.client !== undefined) {
+    const resolved = normalizeClientName(options.client);
+    if (!resolved) fail("client_required");
+    return [resolved];
+  }
+  if (options.config !== undefined) {
+    return promptForClient(io);
+  }
+  const detected = detectInstalledClients(context, env);
+  if (detected.length > 0) {
+    return detected;
+  }
+  if (!io.interactive && options.fallbackClients && options.fallbackClients.length > 0) {
+    return [...options.fallbackClients];
+  }
+  return promptForClient(io);
+}
+
+export function planConnectTargets(
+  clients: readonly SetupClient[],
+  explicitConfig: string | undefined,
+  origin: string,
+  env: Env,
+  context: SetupContext,
+): TargetPlan[] {
+  return clients.map(client => {
+    const configPath = resolveTargetPath(client, explicitConfig, env, context);
+    return planTargetClient(client, configPath, origin, context.platform);
+  });
+}
+
+export function publishConnectPlans(
+  plans: readonly TargetPlan[],
+  io: SetupIO,
+  context: SetupContext,
+  copy: PublishPlanCopy = AUTH_COPY,
+): PublishPlansResult {
+  const published: Array<{ readonly plan: TargetPlan; readonly identity: ReturnType<typeof writeConfig> }> = [];
+  let wroteAny = false;
+  try {
+    for (const plan of plans) {
+      if (plan.next === plan.before.content) {
+        io.log(copy.unchanged(plan.client, plan.before.path, plan.name));
+        continue;
+      }
+      const identity = withDestinationLock(plan.before.path, () => {
+        assertConfigLocation(plan.before.path, context.platform);
+        assertUnchanged(plan.before);
+        return writeConfig(plan.before, plan.next);
+      });
+      published.push({ plan, identity });
+      wroteAny = true;
+      io.log(copy.configured(plan.client, plan.before.path, plan.name));
+    }
+  } catch (cause) {
+    for (let i = published.length - 1; i >= 0; i--) {
+      const item = published[i]!;
+      let restored = false;
+      try {
+        assertConfigLocation(item.plan.before.path, context.platform);
+        restored = withDestinationLock(item.plan.before.path, () => {
+          assertConfigLocation(item.plan.before.path, context.platform);
+          return restoreConfig(item.plan.before, item.plan.next, item.identity);
+        });
+      } catch { /* Preserve any concurrent user edits. */ }
+      if (!restored) {
+        io.log(`configuration_restore_skipped: ${AUTH_COPY.errors.configuration_restore_skipped}`);
+      }
+    }
+    if (cause instanceof AuthError) throw cause;
+    if (cause instanceof DestinationBusyError
+      || (cause instanceof Error && cause.message === SETUP_COPY.errors.changed)) {
+      return fail("configuration_conflict");
+    }
+    return fail("configuration_write_failed");
+  }
+  return { wroteAny };
+}
+
 export async function runAuth(
   argv: readonly string[],
   env: Env = process.env,
@@ -345,46 +458,18 @@ export async function runAuth(
     return fail("configuration_scope_unknown");
   }
 
-  let clients: SetupClient[];
-  if (flags.client !== undefined) {
-    const resolved = normalizeClientName(flags.client);
-    if (!resolved) fail("client_required");
-    clients = [resolved];
-  } else if (flags.config !== undefined) {
-    if (!io.interactive) fail("client_required");
-    let chosenRaw: string;
-    try {
-      chosenRaw = (await io.ask(`${AUTH_COPY.chooseClient} (${SETUP_CLIENTS.join(", ")})`, false)).trim();
-    } catch {
-      io.log(`auth_cancelled: ${AUTH_COPY.errors.auth_cancelled}`);
-      return 130;
-    }
-    const chosen = normalizeClientName(chosenRaw);
-    if (!chosen) fail("client_required");
-    clients = [chosen];
-  } else {
-    const detected = detectInstalledClients(context, env);
-    if (detected.length > 0) {
-      clients = detected;
-    } else {
-      if (!io.interactive) fail("client_required");
-      let chosenRaw: string;
-      try {
-        chosenRaw = (await io.ask(`${AUTH_COPY.chooseClient} (${SETUP_CLIENTS.join(", ")})`, false)).trim();
-      } catch {
-        io.log(`auth_cancelled: ${AUTH_COPY.errors.auth_cancelled}`);
-        return 130;
-      }
-      const chosen = normalizeClientName(chosenRaw);
-      if (!chosen) fail("client_required");
-      clients = [chosen];
-    }
+  const clients = await resolveClientsForSetup(
+    { client: flags.client, config: flags.config },
+    env,
+    io,
+    context,
+  );
+  if (clients === null) {
+    io.log(`auth_cancelled: ${AUTH_COPY.errors.auth_cancelled}`);
+    return 130;
   }
 
-  const plans = clients.map(client => {
-    const configPath = resolveTargetPath(client, flags.config, env, context);
-    return planTargetClient(client, configPath, origin, context.platform);
-  });
+  const plans = planConnectTargets(clients, flags.config, origin, env, context);
 
   if (flags.dryRun) {
     for (const plan of plans) {
@@ -414,46 +499,7 @@ export async function runAuth(
     }
   }
 
-  const published: Array<{ readonly plan: TargetPlan; readonly identity: ReturnType<typeof writeConfig> }> = [];
-  let wroteAny = false;
-  try {
-    for (const plan of plans) {
-      if (plan.next === plan.before.content) {
-        io.log(AUTH_COPY.unchanged(plan.client, plan.before.path, plan.name));
-        continue;
-      }
-      const identity = withDestinationLock(plan.before.path, () => {
-        assertConfigLocation(plan.before.path, context.platform);
-        assertUnchanged(plan.before);
-        return writeConfig(plan.before, plan.next);
-      });
-      published.push({ plan, identity });
-      wroteAny = true;
-      io.log(AUTH_COPY.configured(plan.client, plan.before.path, plan.name));
-    }
-  } catch (cause) {
-    for (let i = published.length - 1; i >= 0; i--) {
-      const item = published[i]!;
-      let restored = false;
-      try {
-        assertConfigLocation(item.plan.before.path, context.platform);
-        restored = withDestinationLock(item.plan.before.path, () => {
-          assertConfigLocation(item.plan.before.path, context.platform);
-          return restoreConfig(item.plan.before, item.plan.next, item.identity);
-        });
-      } catch { /* Preserve any concurrent user edits. */ }
-      if (!restored) {
-        io.log(`configuration_restore_skipped: ${AUTH_COPY.errors.configuration_restore_skipped}`);
-      }
-    }
-    if (cause instanceof AuthError) throw cause;
-    if (cause instanceof DestinationBusyError
-      || (cause instanceof Error && cause.message === SETUP_COPY.errors.changed)) {
-      return fail("configuration_conflict");
-    }
-    return fail("configuration_write_failed");
-  }
-
+  const { wroteAny } = publishConnectPlans(plans, io, context);
   if (wroteAny) io.log(AUTH_COPY.restart);
   return 0;
 }

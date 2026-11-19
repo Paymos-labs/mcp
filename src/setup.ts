@@ -1,6 +1,6 @@
 import {
   chmodSync, closeSync, constants, existsSync, fstatSync, linkSync, lstatSync,
-  mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync,
+  mkdirSync, openSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
@@ -10,10 +10,14 @@ import { Writable } from "node:stream";
 import { isDeepStrictEqual } from "node:util";
 import { applyEdits, modify, parse as parseJson, parseTree, type Node, type ParseError } from "jsonc-parser";
 import { parse as parseToml, stringify as stringifyToml, type TomlTable } from "smol-toml";
+import {
+  AuthError, planConnectTargets, publishConnectPlans, resolveClientsForSetup, type AuthSessionHooks,
+} from "./auth.js";
 import type { PaymosMcpCredentials } from "./config.js";
 import { readCredentialFile } from "./credential-file.js";
 import { checkCredentials } from "./gate.js";
-import { SETUP_COPY } from "./setup-copy.js";
+import { defaultTokenPath, loginWithBrowser, OAuthSessionError, validateOrigin } from "./oauth-session.js";
+import { AUTH_COPY, SETUP_COPY } from "./setup-copy.js";
 import { DestinationBusyError, withDestinationLock } from "./setup-lock.js";
 
 export const SETUP_CLIENTS = [
@@ -58,6 +62,10 @@ interface SetupOptions {
   client?: string;
   config?: string;
   credentialsFile?: string;
+  origin?: string;
+  tokenFile?: string;
+  sandbox: boolean;
+  noLogin: boolean;
   dryRun: boolean;
   help: boolean;
 }
@@ -71,10 +79,14 @@ function sameIdentity(a: FileIdentity, b: FileIdentity): boolean {
 }
 
 function options(argv: readonly string[]): SetupOptions {
-  const result: SetupOptions = { dryRun: false, help: false };
+  const result: SetupOptions = { sandbox: false, noLogin: false, dryRun: false, help: false };
   const seen = new Set<string>();
   const flags = new Map([
-    ["--client", "client"], ["--config", "config"], ["--credentials-file", "credentialsFile"],
+    ["--client", "client"],
+    ["--config", "config"],
+    ["--credentials-file", "credentialsFile"],
+    ["--origin", "origin"],
+    ["--token-file", "tokenFile"],
   ] as const);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -83,13 +95,18 @@ function options(argv: readonly string[]): SetupOptions {
     const normalized = flag === "-h" ? "--help" : flag;
     if (seen.has(normalized)) error("arguments");
     seen.add(normalized);
-    if (normalized === "--help" || normalized === "--dry-run") {
+    if (normalized === "--help" || normalized === "--dry-run"
+      || normalized === "--no-login" || normalized === "--sandbox") {
       if (split >= 0) error("arguments");
       if (normalized === "--help") result.help = true;
-      else result.dryRun = true;
+      else if (normalized === "--dry-run") result.dryRun = true;
+      else if (normalized === "--no-login") result.noLogin = true;
+      else result.sandbox = true;
       continue;
     }
-    const field = flags.get(flag as "--client" | "--config" | "--credentials-file");
+    const field = flags.get(
+      flag as "--client" | "--config" | "--credentials-file" | "--origin" | "--token-file",
+    );
     if (!field) error("arguments");
     const value = split < 0 ? argv[++i] : arg.slice(split + 1);
     if (value === undefined || value.trim() === "" || value.startsWith("--")) error("arguments");
@@ -419,12 +436,38 @@ export function terminalIO(): SetupIO {
   };
 }
 
-export async function runSetup(
-  argv: readonly string[], env: Env = process.env, io: SetupIO = terminalIO(),
-  context: SetupContext = { home: homedir(), cwd: process.cwd(), platform: process.platform },
-): Promise<void> {
-  const flags = options(argv);
-  if (flags.help) { io.log(SETUP_COPY.help); return; }
+function normalizeDir(dir: string): string {
+  try {
+    return realpathSync(dir);
+  } catch {
+    return resolve(dir);
+  }
+}
+
+function parseYesNo(raw: string): boolean | undefined {
+  const answer = raw.trim().toLowerCase();
+  if (answer === "" || answer === "y" || answer === "yes") return true;
+  if (answer === "n" || answer === "no") return false;
+  return undefined;
+}
+
+async function promptBrowserSignIn(io: SetupIO): Promise<boolean> {
+  try {
+    const first = parseYesNo(await io.ask(SETUP_COPY.offerBrowserAuth, false));
+    if (first !== undefined) return first;
+    const retry = parseYesNo(await io.ask(SETUP_COPY.offerBrowserRetry, false));
+    return retry ?? false;
+  } catch {
+    return false;
+  }
+}
+
+async function runLegacySandboxSetup(
+  flags: SetupOptions,
+  env: Env,
+  io: SetupIO,
+  context: SetupContext,
+): Promise<number> {
   io.log(SETUP_COPY.title);
   const requested = flags.client ?? await ask(io, `${SETUP_COPY.chooseClient} (${SETUP_CLIENTS.join(", ")})`);
   const client = normalizeClientName(requested);
@@ -451,9 +494,9 @@ export async function runSetup(
   if (flags.dryRun) {
     io.log(SETUP_COPY.preview(configPath));
     io.log(SETUP_COPY.preview(credentialsPath));
-    return;
+    return 0;
   }
-  if (before.content === next && stored !== undefined) { io.log(SETUP_COPY.unchanged(configPath)); return; }
+  if (before.content === next && stored !== undefined) { io.log(SETUP_COPY.unchanged(configPath)); return 0; }
   let createdKeys: FileIdentity | undefined;
   try {
     // `next` was planned from `before`. Under the lock the config is read again and must still
@@ -483,4 +526,112 @@ export async function runSetup(
   }
   io.log(SETUP_COPY.configured(configPath));
   io.log(SETUP_COPY.restart);
+  return 0;
+}
+
+export async function runSetup(
+  argv: readonly string[],
+  env: Env = process.env,
+  io: SetupIO = terminalIO(),
+  context: SetupContext = { home: homedir(), cwd: process.cwd(), platform: process.platform },
+  sessionHooks: AuthSessionHooks = {},
+): Promise<number> {
+  const flags = options(argv);
+  if (flags.help) { io.log(SETUP_COPY.help); return 0; }
+
+  const hasLegacySignal = flags.sandbox
+    || flags.credentialsFile !== undefined
+    || env.PAYMOS_API_KEY_ID !== undefined
+    || env.PAYMOS_API_SECRET !== undefined
+    || env.PAYMOS_CREDENTIALS_FILE !== undefined;
+
+  const hasUniversalOnlyFlag = flags.origin !== undefined
+    || flags.tokenFile !== undefined
+    || flags.noLogin;
+
+  if (hasLegacySignal && hasUniversalOnlyFlag) {
+    error("arguments");
+  }
+
+  if (hasLegacySignal) {
+    return runLegacySandboxSetup(flags, env, io, context);
+  }
+
+  let origin: string;
+  try {
+    origin = validateOrigin(flags.origin ?? env.PAYMOS_MCP_ORIGIN);
+  } catch {
+    throw new AuthError("invalid_origin");
+  }
+
+  const normalizedContext: SetupContext = {
+    ...context,
+    home: normalizeDir(context.home),
+    cwd: normalizeDir(context.cwd),
+  };
+
+  io.log(SETUP_COPY.title);
+  const clients = await resolveClientsForSetup(
+    {
+      client: flags.client,
+      config: flags.config,
+      fallbackClients: ["claude-code", "codex"],
+    },
+    env,
+    io,
+    normalizedContext,
+  );
+  if (clients === null) {
+    io.log(SETUP_COPY.errors.cancelled);
+    return 130;
+  }
+
+  const plans = planConnectTargets(clients, flags.config, origin, env, normalizedContext);
+  if (flags.dryRun) {
+    for (const plan of plans) {
+      io.log(AUTH_COPY.preview(plan.client, plan.before.path, plan.name));
+    }
+    return 0;
+  }
+
+  const { wroteAny } = publishConnectPlans(plans, io, normalizedContext);
+  if (!io.interactive || flags.noLogin) {
+    io.log(SETUP_COPY.referenceReady);
+    if (wroteAny) io.log(SETUP_COPY.restart);
+    return 0;
+  }
+
+  const wantsLogin = await promptBrowserSignIn(io);
+  if (!wantsLogin) {
+    io.log(SETUP_COPY.referenceReady);
+    if (wroteAny) io.log(SETUP_COPY.restart);
+    return 0;
+  }
+
+  const tokenFile = flags.tokenFile !== undefined
+    ? absolute(flags.tokenFile, normalizedContext)
+    : defaultTokenPath(env, normalizedContext);
+  try {
+    await loginWithBrowser({
+      origin,
+      tokenFile,
+      env,
+      ...sessionHooks,
+    });
+    io.log(AUTH_COPY.signedIn(origin));
+    if (wroteAny) io.log(SETUP_COPY.restart);
+    return 0;
+  } catch (cause) {
+    if (cause instanceof OAuthSessionError && (cause.code === "oauth_cancelled" || cause.code === "oauth_denied")) {
+      io.log(`auth_cancelled: ${AUTH_COPY.errors.auth_cancelled}`);
+      io.log(SETUP_COPY.loginSkippedAfterConfig);
+      if (wroteAny) io.log(SETUP_COPY.restart);
+      return 130;
+    }
+    const detail = cause instanceof Error ? cause.message : AUTH_COPY.errors.auth_failed;
+    io.log(`auth_failed: ${detail}`);
+    io.log(SETUP_COPY.loginSkippedAfterConfig);
+    if (wroteAny) io.log(SETUP_COPY.restart);
+    return 1;
+  }
 }

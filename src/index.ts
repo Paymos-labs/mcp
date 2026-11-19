@@ -25,7 +25,8 @@ export async function main(
   argv: readonly string[] = process.argv.slice(2),
 ): Promise<void> {
   if (argv[0] === "setup") {
-    await runSetup(argv.slice(1), env);
+    const code = await runSetup(argv.slice(1), env);
+    if (code !== 0) process.exitCode = code;
     return;
   }
   if (argv[0] === "auth") {
