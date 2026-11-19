@@ -29,7 +29,7 @@ function save(path: string, text: string) {
 }
 
 describe("client schemas", () => {
-  it.each(["claude-code", "claude-desktop", "kimi", "cursor", "windsurf", "generic"] as const)("adds %s without changing foreign settings/comments", client => {
+  it.each(["claude-code", "claude-desktop", "antigravity", "kimi", "cursor", "windsurf", "generic"] as const)("adds %s without changing foreign settings/comments", client => {
     const original = '{\n// keep this\n"model":"custom-glm","mcpServers":{"other":{"command":"other"}},\n}\n';
     const text = planClientConfig(client, original, "/private/keys.json", "linux");
     expect(text).toContain("// keep this");
@@ -63,6 +63,23 @@ describe("client schemas", () => {
     } } });
   });
 
+  it("uses nested mcp.servers for zcode and glm alias while retaining JSONC comments", () => {
+    const original = '{// keep zcode\n"mcp":{"servers":{"other":{"command":"other"}}}}\n';
+    for (const alias of ["zcode", "glm"] as const) {
+      const text = planClientConfig(alias, original, "/keys.json", "linux");
+      expect(text).toContain("// keep zcode");
+      expect(parseJson(text)).toEqual({
+        mcp: {
+          servers: {
+            other: { command: "other" },
+            paymos: { command: "npx", args: ["-y", "@paymos/mcp"], env: { PAYMOS_CREDENTIALS_FILE: "/keys.json" } },
+          },
+        },
+      });
+      expect(planClientConfig(alias, text, "/keys.json", "linux")).toBe(text);
+    }
+  });
+
   it.each(['{"mcpServers":null}', '{"mcpServers":[]}', '{"mcpServers":{},"mcpServers":{}}',
     '{"outer":{"x":1,"x":2}}', '{"sk_test_DO_NOT_LOG":'])
   ("rejects invalid/duplicate JSON config (%#)", value => {
@@ -78,7 +95,7 @@ describe("client schemas", () => {
 });
 
 describe("setup writes", () => {
-  it.each(["codex", "claude-code", "kimi", "cursor", "windsurf", "opencode", "vscode"] as const)("configures %s with a usable private file and no inline secrets", async client => {
+  it.each(["codex", "claude-code", "antigravity", "kimi", "zcode", "cursor", "windsurf", "opencode", "vscode"] as const)("configures %s with a usable private file and no inline secrets", async client => {
     const f = fixture();
     await runSetup(["--client", client], env, f.io, f.context);
     const path = defaultConfigPath(client, {}, f.context);
@@ -107,6 +124,14 @@ describe("setup writes", () => {
     expect(defaultConfigPath("kimi", { KIMI_CODE_HOME: "/kimi-custom" }, f.context)).toBe(join("/kimi-custom", "mcp.json"));
     expect(defaultConfigPath("opencode", { OPENCODE_CONFIG: "/chosen.jsonc" }, f.context)).toBe("/chosen.jsonc");
     expect(defaultConfigPath("claude-desktop", { APPDATA: "/appdata" }, { ...f.context, platform: "win32" })).toBe(join("/appdata", "Claude", "claude_desktop_config.json"));
+    expect(defaultConfigPath("antigravity", {}, f.context)).toBe(join(f.home, ".gemini", "config", "mcp_config.json"));
+    expect(defaultConfigPath("zcode", {}, f.context)).toBe(join(f.home, ".zcode", "cli", "config.json"));
+    expect(defaultConfigPath("glm", {}, f.context)).toBe(join(f.home, ".zcode", "cli", "config.json"));
+
+    const glmHome = fixture();
+    await runSetup(["--client", "glm"], env, glmHome.io, glmHome.context);
+    expect(parseJson(readFileSync(join(glmHome.home, ".zcode", "cli", "config.json"), "utf8")).mcp.servers.paymos.env.PAYMOS_CREDENTIALS_FILE)
+      .toBe(glmHome.credentials);
   });
 
   it("reuses a saved private pair when adding another client", async () => {

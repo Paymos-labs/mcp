@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,10 +46,10 @@ const webhookSecret = "whsec_packed_DO_NOT_PRINT";
 const isolatedEnv = { ...process.env, XDG_CONFIG_HOME: join(temp, "config"),
   PAYMOS_API_KEY_ID: "pk_test_packed", PAYMOS_API_SECRET: secret, PAYMOS_WEBHOOK_SECRET: webhookSecret };
 delete isolatedEnv.PAYMOS_CREDENTIALS_FILE;
-for (const args of [["--help"], ["setup", "--help"]]) {
+for (const args of [["--help"], ["setup", "--help"], ["auth", "--help"], ["connect", "--help"]]) {
   const result = spawnSync(process.execPath, [bin, ...args], { env: isolatedEnv, encoding: "utf8", timeout: 10_000, windowsHide: true });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /setup/);
+  assert.match(result.stdout, /Usage:/);
   assert(!result.stderr.includes("sandbox session ready"));
 }
 const args = ["setup", "--client", "generic", "--config", clientConfig, "--credentials-file", credentialFile];
@@ -92,5 +92,65 @@ try {
 }
 assert.match(stderr, /sandbox session ready/);
 assert(!stderr.includes(secret) && !stderr.includes(webhookSecret));
-console.log(JSON.stringify({ packageSmoke: "pass", tools: 15, resources: 5, privateFile: true,
-  installedBinSetup: "pass", configuredLauncher: "pass", repeat: "pass", help: "pass", signatureFromFile: "pass", networkTests: "not run" }));
+
+// Packed Merchant MCP bridge smoke (`connect` initialize + 188 tools without browser login).
+const connectTokenFile = join(temp, "oauth-private", "merchant-oauth.json");
+const connectTransport = new StdioClientTransport({
+  command: process.execPath,
+  args: [bin, "connect", "--token-file", connectTokenFile],
+  cwd: temp,
+  env: isolatedEnv,
+  stderr: "pipe",
+});
+let connectStderr = "";
+connectTransport.stderr?.on("data", chunk => { connectStderr += String(chunk); });
+const connectClient = new Client({ name: "paymos-offline-connect-check", version: "1.0.0" });
+try {
+  await connectClient.connect(connectTransport);
+  await connectClient.ping();
+  const listed = (await connectClient.listTools()).tools;
+  assert.equal(listed.length, 188);
+  const catalog = JSON.parse(readFileSync(join(root, "scripts", "merchant-tools-catalog.json"), "utf8"));
+  assert.deepEqual(
+    listed.map(t => ({ name: t.name, description: t.description ?? "", inputSchema: t.inputSchema })),
+    catalog,
+  );
+} finally {
+  await connectClient.close();
+}
+assert.equal(connectStderr, "");
+
+// Reject cleartext non-loopback origin cleanly without hanging.
+const badOrigin = spawnSync(process.execPath, [bin, "connect", "--origin", "http://evil.example"], {
+  env: isolatedEnv, encoding: "utf8", timeout: 10_000, windowsHide: true,
+});
+assert.notEqual(badOrigin.status, 0);
+assert.match(badOrigin.stderr, /invalid_origin/);
+
+// Packed `paymos-mcp auth --no-login` smoke in isolated home for antigravity and glm -> zcode.
+const authHome = join(temp, "auth-home");
+const authEnv = {
+  ...isolatedEnv,
+  HOME: authHome,
+  USERPROFILE: authHome,
+  APPDATA: join(authHome, "AppData", "Roaming"),
+  XDG_CONFIG_HOME: join(authHome, ".config"),
+};
+mkdirSync(authHome, { recursive: true });
+run(["exec", "--offline", "--no", "--", "paymos-mcp", "auth", "--client", "antigravity", "--no-login"], {
+  cwd: temp, env: authEnv,
+});
+const antigravityConfig = JSON.parse(readFileSync(join(authHome, ".gemini", "config", "mcp_config.json"), "utf8"));
+assert(antigravityConfig.mcpServers.paymos);
+assert(JSON.stringify(antigravityConfig.mcpServers.paymos).includes("connect"));
+
+run(["exec", "--offline", "--no", "--", "paymos-mcp", "auth", "--client", "glm", "--no-login"], {
+  cwd: temp, env: authEnv,
+});
+const zcodeConfig = JSON.parse(readFileSync(join(authHome, ".zcode", "cli", "config.json"), "utf8"));
+assert(zcodeConfig.mcp.servers.paymos);
+assert(JSON.stringify(zcodeConfig.mcp.servers.paymos).includes("connect"));
+
+console.log(JSON.stringify({ packageSmoke: "pass", tools: 15, merchantTools: 188, resources: 5, privateFile: true,
+  installedBinSetup: "pass", installedBinAuth: "pass", connectSmoke: "pass",
+  configuredLauncher: "pass", repeat: "pass", help: "pass", signatureFromFile: "pass", networkTests: "not run" }));

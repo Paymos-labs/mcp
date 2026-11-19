@@ -1,6 +1,6 @@
 {
   "name": "@paymos/mcp",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Official Paymos MCP server: a local stdio server that lets coding agents (Claude Code, Cursor, custom LLM bots) build and verify a merchant integration against the Paymos sandbox without reading docs.",
   "keywords": [
     "paymos",
@@ -52,11 +52,11 @@
   },
   "scripts": {
     "build": "npm run build:resources && tsup src/index.ts --format esm --dts --clean",
-    "build:resources": "node scripts/generate-resources.mjs",
+    "build:resources": "node scripts/generate-resources.mjs && node scripts/generate-merchant-tools.mjs",
     "check": "tsc --noEmit",
     "test": "vitest run",
     "verify:local": "node scripts/verify-local-setup.mjs",
-    "prepack": "npm run check && npm test && npm run build"
+    "prepack": "npm run build && npm run check && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",

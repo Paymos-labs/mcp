@@ -1,10 +1,11 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { tmpdir, userInfo } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runInstallSecret, type DeliveryRuntime } from "../src/install-secret.js";
@@ -323,4 +324,47 @@ describe("paymos install-secret", process.platform === "win32" ? { timeout: 15_0
     expect(readdirSync(f.cwd)).toEqual([envFile]);
     expect(readFileSync(f.file, "utf8")).toBe(original + "# concurrent\n");
   });
+
+  it("supports --file without colliding with Node's --env-file flag and rejects mixing both flags", async () => {
+    const f = fixture();
+    await runInstallSecret(["--prepare", "--file", envFile, "--merchant-id", merchant,
+      "--environment", "Sandbox", "--operation-id", operation], f.runtime);
+    const descriptor = JSON.parse(f.stdout.at(-1)!) as Challenge;
+    expect(descriptor.challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    await expect(runInstallSecret(["--prepare", "--file", envFile, "--env-file", envFile,
+      "--merchant-id", merchant, "--environment", "Sandbox", "--operation-id", operation], f.runtime))
+      .rejects.toThrow(/^delivery_arguments:/);
+
+    f.fetch.mockResolvedValueOnce(secretResponse(descriptor));
+    await runInstallSecret(["--token", ticket, "--request-id", descriptor.request_id, "--file", envFile], f.runtime);
+    expect(parseEnv(readFileSync(f.file, "utf8"))).toEqual({
+      PAYMOS_API_KEY: "fixture-public-key",
+      PAYMOS_API_SECRET: secret,
+    });
+
+    const pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const builtCli = resolve(pkgRoot, "dist/index.js");
+    if (!existsSync(builtCli)) {
+      const build = process.platform === "win32"
+        ? spawnSync("cmd.exe", ["/d", "/c", "npm.cmd", "run", "build"], { cwd: pkgRoot, encoding: "utf8" })
+        : spawnSync("npm", ["run", "build"], { cwd: pkgRoot, encoding: "utf8" });
+      expect(build.status, build.stderr || build.stdout).toBe(0);
+    }
+    const env = { ...process.env, HOME: f.runtime.home, USERPROFILE: f.runtime.home, LOCALAPPDATA: join(f.runtime.home, "AppData", "Local") };
+    const cli = spawnSync(process.execPath, [
+      builtCli, "install-secret", "--prepare", "--file", ".env.new",
+      "--merchant-id", merchant, "--environment", "sandbox", "--operation-id", operation,
+    ], { cwd: f.cwd, env, encoding: "utf8" });
+    expect(cli.status).toBe(0);
+    expect(cli.stderr).toBe("");
+    const parsed = JSON.parse(cli.stdout.trim()) as Challenge;
+    expect(parsed.request_id).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(parsed.challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(existsSync(join(f.cwd, ".env.new"))).toBe(false);
+    const realStateBase = process.platform === "win32"
+      ? (process.env.LOCALAPPDATA ?? join(userInfo().homedir, "AppData", "Local"))
+      : userInfo().homedir;
+    rmSync(join(realStateBase, ".paymos-mcp-delivery", parsed.request_id + ".json"), { force: true });
+  }, 30_000);
 });

@@ -17,14 +17,32 @@ import { SETUP_COPY } from "./setup-copy.js";
 import { DestinationBusyError, withDestinationLock } from "./setup-lock.js";
 
 export const SETUP_CLIENTS = [
-  "codex", "claude-code", "claude-desktop", "kimi", "cursor", "windsurf", "opencode", "vscode", "generic",
+  "codex", "claude-code", "claude-desktop", "antigravity", "kimi", "zcode", "cursor", "windsurf", "opencode", "vscode", "generic",
 ] as const;
-type SetupClient = typeof SETUP_CLIENTS[number];
+export type SetupClient = typeof SETUP_CLIENTS[number];
+export type ClientSchema = { readonly format: ConfigFormat; readonly groupPath: readonly string[] };
 type Env = Readonly<Record<string, string | undefined>>;
 export type JsonObject = Record<string, unknown>;
 type FileIdentity = { ino: bigint; dev: bigint; birthtimeNs: bigint };
 export type Snapshot = { path: string; content: null } | { path: string; content: string; identity: FileIdentity };
 export type ConfigFormat = "toml" | "jsonc";
+
+export function normalizeClientName(raw: string): SetupClient | undefined {
+  const normalized = raw.trim();
+  if (normalized === "glm") return "zcode";
+  return (SETUP_CLIENTS as readonly string[]).includes(normalized) ? (normalized as SetupClient) : undefined;
+}
+
+export function clientConfigSchema(client: SetupClient | "glm"): ClientSchema {
+  const normalized = client === "glm" ? "zcode" : client;
+  switch (normalized) {
+    case "codex": return { format: "toml", groupPath: ["mcp_servers"] };
+    case "opencode": return { format: "jsonc", groupPath: ["mcp"] };
+    case "vscode": return { format: "jsonc", groupPath: ["servers"] };
+    case "zcode": return { format: "jsonc", groupPath: ["mcp", "servers"] };
+    default: return { format: "jsonc", groupPath: ["mcpServers"] };
+  }
+}
 
 export interface SetupIO {
   readonly interactive: boolean;
@@ -102,12 +120,15 @@ function absolute(path: string, context: SetupContext): string {
   return resolve(context.cwd, path);
 }
 
-export function defaultConfigPath(client: SetupClient, env: Env, context: SetupContext): string {
+export function defaultConfigPath(client: SetupClient | "glm", env: Env, context: SetupContext): string {
+  const normalized = client === "glm" ? "zcode" : client;
   const configHome = env.XDG_CONFIG_HOME || join(context.home, ".config");
-  switch (client) {
+  switch (normalized) {
     case "codex": return join(env.CODEX_HOME || join(context.home, ".codex"), "config.toml");
     case "claude-code": return join(context.home, ".claude.json");
+    case "antigravity": return join(context.home, ".gemini", "config", "mcp_config.json");
     case "kimi": return join(env.KIMI_CODE_HOME || join(context.home, ".kimi-code"), "mcp.json");
+    case "zcode": return join(context.home, ".zcode", "cli", "config.json");
     case "cursor": return join(context.home, ".cursor", "mcp.json");
     case "windsurf": return join(context.home, ".codeium", "windsurf", "mcp_config.json");
     case "vscode": return join(context.cwd, ".vscode", "mcp.json");
@@ -117,10 +138,15 @@ export function defaultConfigPath(client: SetupClient, env: Env, context: SetupC
       return existsSync(jsonc) ? jsonc : join(configHome, "opencode", "opencode.json");
     }
     case "claude-desktop":
-      if (context.platform === "win32" && env.APPDATA)
-        return join(env.APPDATA, "Claude", "claude_desktop_config.json");
-      if (context.platform === "darwin")
+      if (context.platform === "win32") {
+        const appData = env.APPDATA && env.APPDATA.trim() !== ""
+          ? env.APPDATA
+          : join(context.home, "AppData", "Roaming");
+        return join(appData, "Claude", "claude_desktop_config.json");
+      }
+      if (context.platform === "darwin") {
         return join(context.home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+      }
       return error("configRequired");
     case "generic": return error("configRequired");
   }
@@ -179,47 +205,150 @@ export function parseConfig(format: ConfigFormat, original: string | null): Json
   try { return parseToml(original ?? ""); } catch { return error("configFile"); }
 }
 
-export function configEntries(root: JsonObject, group: string): JsonObject {
-  const entries = root[group];
-  if (entries === undefined) return {};
-  if (!object(entries)) return error("configFile");
-  return entries;
+function groupPathArray(group: string | readonly string[]): readonly string[] {
+  return typeof group === "string" ? [group] : group;
+}
+
+export function configEntries(root: JsonObject, group: string | readonly string[]): JsonObject {
+  let current: JsonObject = root;
+  for (const segment of groupPathArray(group)) {
+    const entries = current[segment];
+    if (entries === undefined) return {};
+    if (!object(entries)) return error("configFile");
+    current = entries;
+  }
+  return current;
+}
+
+function withNestedEntry(
+  root: JsonObject,
+  path: readonly string[],
+  name: string,
+  entry: JsonObject,
+): JsonObject {
+  if (path.length === 0) return { ...root, [name]: entry };
+  const [head, ...tail] = path;
+  const existing = root[head!];
+  const branch = existing === undefined ? {} : (object(existing) ? existing : error("configFile"));
+  return { ...root, [head!]: withNestedEntry(branch, tail, name, entry) };
+}
+
+function splitTomlHeader(header: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < header.length; i++) {
+    const ch = header[i]!;
+    if (quote) {
+      if (ch === "\\" && quote === '"' && i + 1 < header.length) {
+        current += header[++i]!;
+      } else if (ch === quote) {
+        quote = null;
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === ".") {
+      parts.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  parts.push(current.trim());
+  return parts;
+}
+
+function stripTomlTable(text: string, path: readonly string[], name: string, eol: string): string {
+  const target = [...path, name];
+  const kept: string[] = [];
+  let skipping = false;
+  for (const line of text.split(/\r?\n/)) {
+    const headerMatch = /^\s*\[{1,2}\s*(.+?)\s*\]{1,2}\s*(?:#.*)?$/.exec(line);
+    if (headerMatch) {
+      const segments = splitTomlHeader(headerMatch[1]!);
+      const matches = segments.length >= target.length && target.every((seg, idx) => segments[idx] === seg);
+      skipping = matches;
+      if (matches) continue;
+    }
+    if (!skipping) kept.push(line);
+  }
+  while (kept.length > 0 && kept[kept.length - 1]!.trim() === "") kept.pop();
+  return kept.join(eol);
 }
 
 export function planConfigEntry(
-  format: ConfigFormat, original: string | null, group: string, name: string, entry: JsonObject,
+  format: ConfigFormat,
+  original: string | null,
+  group: string | readonly string[],
+  name: string,
+  entry: JsonObject,
+  options?: { readonly replace?: boolean },
 ): string {
+  const path = groupPathArray(group);
   const root = parseConfig(format, original);
-  const entries = configEntries(root, group);
+  const entries = configEntries(root, path);
   if (Object.hasOwn(entries, name)) {
-    if (!equalData(entries[name], entry)) error("conflict");
-    return original!;
+    if (equalData(entries[name], entry)) return original!;
+    if (!options?.replace) error("conflict");
   }
   const text = original ?? (format === "toml" ? "" : "{}\n");
   const eol = text.includes("\r\n") ? "\r\n" : "\n";
-  const next = format === "toml"
-    ? text + eol + stringifyToml({ [group]: { [name]: entry as TomlTable } }).replace(/\r?\n/g, eol)
-    : applyEdits(text, modify(text, [group, name], entry, {
+  const expected = withNestedEntry(root, path, name, entry);
+
+  if (format === "jsonc") {
+    const next = applyEdits(text, modify(text, [...path, name], entry, {
       formattingOptions: { insertSpaces: true, tabSize: 2, eol },
     }));
-  const expected = { ...root, [group]: { ...entries, [name]: entry } };
+    if (!equalData(parseConfig(format, next), expected)) error("configFile");
+    return next;
+  }
+
+  if (path.length !== 1) error("configFile");
+  const groupName = path[0]!;
+  const block = stringifyToml({ [groupName]: { [name]: entry as TomlTable } }).replace(/\r?\n/g, eol);
+  let next: string;
+  if (Object.hasOwn(entries, name)) {
+    const base = stripTomlTable(text, path, name, eol);
+    const candidate = base === "" ? block : base + eol + eol + block;
+    try {
+      next = equalData(parseConfig("toml", candidate), expected)
+        ? candidate
+        : stringifyToml(expected as TomlTable).replace(/\r?\n/g, eol);
+    } catch {
+      next = stringifyToml(expected as TomlTable).replace(/\r?\n/g, eol);
+    }
+  } else {
+    next = text + eol + block;
+  }
   if (!equalData(parseConfig(format, next), expected)) error("configFile");
   return next;
 }
 
+export function planClientEntry(
+  client: SetupClient | "glm",
+  original: string | null,
+  name: string,
+  entry: JsonObject,
+  options?: { readonly replace?: boolean },
+): string {
+  const schema = clientConfigSchema(client);
+  return planConfigEntry(schema.format, original, schema.groupPath, name, entry, options);
+}
+
 /** All adapters share one launcher; only the client's config envelope varies. */
 export function planClientConfig(
-  client: SetupClient, original: string | null, credentialsPath: string, platform: NodeJS.Platform,
+  client: SetupClient | "glm", original: string | null, credentialsPath: string, platform: NodeJS.Platform,
 ): string {
+  const normalized = client === "glm" ? "zcode" : client;
   const command = platform === "win32" ? "cmd" : "npx";
   const args = platform === "win32" ? ["/d", "/c", "npx", "-y", "@paymos/mcp"] : ["-y", "@paymos/mcp"];
   const env = { PAYMOS_CREDENTIALS_FILE: credentialsPath };
-  const entry = client === "opencode"
+  const entry = normalized === "opencode"
     ? { type: "local", command: [command, ...args], environment: env, enabled: true }
-    : { ...(client === "vscode" ? { type: "stdio" } : {}), command, args, env };
-  if (client === "codex") return planConfigEntry("toml", original, "mcp_servers", "paymos", entry);
-  const group = client === "opencode" ? "mcp" : client === "vscode" ? "servers" : "mcpServers";
-  return planConfigEntry("jsonc", original, group, "paymos", entry);
+    : { ...(normalized === "vscode" ? { type: "stdio" } : {}), command, args, env };
+  return planClientEntry(normalized, original, "paymos", entry);
 }
 
 /** Publish a complete file; an absent target is created without clobbering a new arrival. */
@@ -298,8 +427,8 @@ export async function runSetup(
   if (flags.help) { io.log(SETUP_COPY.help); return; }
   io.log(SETUP_COPY.title);
   const requested = flags.client ?? await ask(io, `${SETUP_COPY.chooseClient} (${SETUP_CLIENTS.join(", ")})`);
-  if (!(SETUP_CLIENTS as readonly string[]).includes(requested)) error("client");
-  const client = requested as SetupClient;
+  const client = normalizeClientName(requested);
+  if (!client) error("client");
   const configPath = absolute(flags.config ?? defaultConfigPath(client, env, context), context);
   const credentialsPath = absolute(flags.credentialsFile ?? env.PAYMOS_CREDENTIALS_FILE
     ?? join(env.XDG_CONFIG_HOME || join(context.home, ".config"), "paymos", "mcp", "credentials.json"), context);

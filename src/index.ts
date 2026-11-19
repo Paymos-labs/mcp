@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { runAuth } from "./auth.js";
 import { loadCredentials, parseFlags } from "./config.js";
+import { runConnect } from "./connect.js";
 import { runDownloadFile, runUploadFile } from "./files.js";
 import { PaymosGateway } from "./gateway.js";
 import { startupLine } from "./gate.js";
@@ -29,6 +30,11 @@ export async function main(
   }
   if (argv[0] === "auth") {
     const code = await runAuth(argv.slice(1), env);
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
+  if (argv[0] === "connect") {
+    const code = await runConnect(argv.slice(1), env);
     if (code !== 0) process.exitCode = code;
     return;
   }

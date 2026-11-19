@@ -4,55 +4,52 @@ Paymos offers a local Sandbox server for integration testing and a hosted MCP co
 
 ## Connect a merchant account
 
-Use the hosted Streamable HTTP URL when Merchant MCP is enabled for your Paymos instance.
+Connect any supported AI IDE or CLI to your Paymos merchant account with one command and no API keys:
 
-- URL `https://app.paymos.io/connect/merchant-mcp`
-- OAuth scopes `merchant:mcp` and `offline_access`
+```bash
+npx -y @paymos/mcp auth
+```
 
-Start sign-in from the MCP settings or your terminal. Paymos opens in your browser. The account owner chooses the merchant and environments, reviews the access being granted, and confirms. The client stores its OAuth session and can then call the merchant tools. Dashboard → Developers → Agents shows connection status, activity, recent operations and the Disconnect action.
+`auth` automatically detects installed clients (`antigravity`, `claude-code`, `codex`, `kimi`, `zcode`/`glm`, `cursor`, `windsurf`, `opencode`, `claude-desktop`, and project `.vscode`), opens Paymos in your browser for OAuth 2.1 PKCE `S256` sign-in (`merchant:mcp` and `offline_access`), saves your OAuth session under OS-protected permissions outside IDE configs (`%APPDATA%\Paymos\mcp\merchant-oauth.json` on Windows, `$XDG_CONFIG_HOME/paymos/mcp/merchant-oauth.json` on Unix), and configures the local stdio OAuth bridge (`@paymos/mcp connect`). If a local Sandbox entry already occupies `paymos`, Merchant MCP is configured side-by-side as `paymos-merchant`.
+
+Dashboard → Developers → Agents shows connection status, activity, recent operations and the Disconnect action.
 
 ### Paymos command
 
 ```bash
-paymos auth --client codex
-paymos auth --client claude-code
+npx -y @paymos/mcp auth
+npx -y @paymos/mcp auth --client antigravity
+npx -y @paymos/mcp auth --client glm
+npx -y @paymos/mcp auth --client codex
+npx -y @paymos/mcp auth --client claude-code
 ```
 
-With the npm package, run `npx -y @paymos/mcp auth --client codex`. The helper adds the hosted entry and starts the native browser flow. It uses `paymos-merchant` when `paymos` is already the Sandbox entry.
+Options for `auth`:
+- `--client NAME`: `codex`, `claude-code`, `claude-desktop`, `antigravity`, `kimi`, `zcode` (or alias `glm`), `cursor`, `windsurf`, `opencode`, `vscode`, or `generic`
+- `--config PATH`: explicit client configuration path (required for `generic`)
+- `--origin URL`: custom Paymos origin (`https://...` or loopback `http://127.0.0.1` / `http://localhost`, default `https://app.paymos.io`)
+- `--token-file PATH`: custom OAuth token store path
+- `--no-login`: write client configurations without opening browser login
+- `--dry-run`: preview target files without signing in or writing
 
-### Codex
+### Local OAuth bridge (`connect`)
 
-In MCP settings, add Paymos as a Streamable HTTP server and choose Authenticate. For a pre-registered OAuth client, set the following in your Codex `config.toml`.
+Configured clients launch `npx -y @paymos/mcp connect` (or `cmd /d /c npx -y @paymos/mcp connect` on Windows). `connect` responds to MCP startup requests (`initialize`, `ping`, `tools/list`, `resources/list`, `prompts/list`) locally without blocking IDE startup, triggers browser OAuth lazily on `tools/call` when needed, and transparently refreshes expired access tokens.
 
-```toml
-[mcp_servers.paymos]
-url = "https://app.paymos.io/connect/merchant-mcp"
-scopes = ["merchant:mcp", "offline_access"]
+### Direct URL connectors (cloud / native OAuth clients)
 
-[mcp_servers.paymos.oauth]
-client_id = "paymos-merchant-codex"
-callback_port = 33419
-callback_url = "http://127.0.0.1:33419/callback"
-```
+Clients that connect directly over Streamable HTTP OAuth 2.1 + DCR can use:
 
-Run `codex mcp login paymos`. Use the same listener port and callback URL. For a coexisting Sandbox entry, use `paymos-merchant` in both the configuration and the login command. [Codex MCP configuration](https://learn.chatgpt.com/docs/config-file/config-reference)
-
-### Claude Code
-
-```bash
-claude mcp add --transport http --scope user --client-id paymos-merchant-claude-code --callback-port 33420 paymos https://app.paymos.io/connect/merchant-mcp
-claude mcp login paymos
-```
-
-You can also select Paymos → Authenticate in Claude Code’s `/mcp` panel. When a local Paymos Sandbox entry already occupies the name, use `paymos-merchant` in both commands. Clients with public OAuth discovery and native loopback dynamic registration can use the hosted URL directly. [Claude Code MCP sign-in](https://code.claude.com/docs/en/mcp#authenticate-from-the-command-line)
+- URL `https://app.paymos.io/connect/merchant-mcp`
+- OAuth scopes `merchant:mcp` and `offline_access`
 
 ### Key and file delivery
 
 The merchant tools can create and rotate Payment and Payout credentials under the merchant’s access policy. The tools return a short-lived installer ticket. The installer uses a verifier generated on the destination machine to exchange the ticket and save the credentials into the chosen environment file.
 
 ```bash
-paymos install-secret --prepare --env-file .env --merchant-id "$PAYMOS_MERCHANT_ID" --environment production --operation-id "$PAYMOS_OPERATION_ID"
-paymos install-secret --env-file .env --request-id "$PAYMOS_REQUEST_ID" --token "$PAYMOS_INSTALLER_TICKET"
+paymos install-secret --prepare --file .env --merchant-id "$PAYMOS_MERCHANT_ID" --environment production --operation-id "$PAYMOS_OPERATION_ID"
+paymos install-secret --file .env --request-id "$PAYMOS_REQUEST_ID" --token "$PAYMOS_INSTALLER_TICKET"
 ```
 
 Pass the first command’s `request_id` and `challenge` as the tool’s `delivery` input with the same merchant, environment and operation ID. Run the second command on the same machine with the returned ticket. For private exports and staged logo or avatar uploads, the `download-file` and `upload-file` helpers use the same prepare-and-redeem flow with `--file`. Upload preparation also supplies the file size, content type and hash.
@@ -90,7 +87,9 @@ npx -y @paymos/mcp setup --client codex
 | Codex | `codex` | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` |
 | Claude Code | `claude-code` | `~/.claude.json` |
 | Claude Desktop | `claude-desktop` | Claude's macOS or Windows configuration |
+| Antigravity | `antigravity` | `~/.gemini/config/mcp_config.json` |
 | Kimi CLI | `kimi` | `$KIMI_CODE_HOME/mcp.json` or `~/.kimi-code/mcp.json` |
+| ZCode / GLM | `zcode` (alias `glm`) | `~/.zcode/cli/config.json` |
 | Cursor | `cursor` | `~/.cursor/mcp.json` |
 | Windsurf | `windsurf` | `~/.codeium/windsurf/mcp_config.json` |
 | OpenCode | `opencode` | `OPENCODE_CONFIG`, or the user configuration under `$XDG_CONFIG_HOME/opencode` or `~/.config/opencode` |

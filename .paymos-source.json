@@ -1,6 +1,6 @@
 {
   "source_repository": "Paymos-labs/paymos",
   "source_path": "plugins/mcp",
-  "source_commit": "afb731f5552c03297da99082da24fba1ce650332",
-  "version": "1.6.0"
+  "source_commit": "f4582c3cf6723ef118921ae1a354abf588450c52",
+  "version": "1.7.0"
 }

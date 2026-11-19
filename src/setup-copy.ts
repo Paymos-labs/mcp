@@ -9,8 +9,9 @@ export const SETUP_COPY = {
 Connect a local MCP client using a Paymos test key pair.
 
 Options:
-  --client NAME            codex, claude-code, claude-desktop, kimi, cursor,
-                           windsurf, opencode, vscode, or generic
+  --client NAME            codex, claude-code, claude-desktop, antigravity,
+                           kimi, zcode (or glm), cursor, windsurf, opencode,
+                           vscode, or generic
   --config PATH            Client configuration file (required for generic)
   --credentials-file PATH  Separate file for your test credentials
   --dry-run                Preview file paths and changes without writing
@@ -28,7 +29,8 @@ The client config contains the credentials file path, not the keys.
 Examples:
   npx -y @paymos/mcp setup
   npx -y @paymos/mcp setup --client codex
-  npx -y @paymos/mcp setup --client kimi --dry-run
+  npx -y @paymos/mcp setup --client antigravity
+  npx -y @paymos/mcp setup --client glm
   npx -y @paymos/mcp setup --client generic --config /path/to/mcp.json
 
 Restart or reconnect your MCP client after setup.`,
@@ -53,15 +55,41 @@ Restart or reconnect your MCP client after setup.`,
 };
 
 export const AUTH_COPY = {
-  help: "Usage: paymos auth [--client codex|claude-code]\n\nConnect your merchant account in the client's browser sign-in.",
-  chooseClient: "Choose your MCP client (codex or claude-code)",
+  help: `Usage: npx -y @paymos/mcp auth [options]
+
+Sign in to Paymos in your browser and configure your AI IDE or CLI for Merchant MCP.
+
+Options:
+  --client NAME      codex, claude-code, claude-desktop, antigravity, kimi,
+                     zcode (or glm), cursor, windsurf, opencode, vscode, or generic
+  --config PATH      Client configuration file (required for generic)
+  --origin URL       Paymos origin override (default: https://app.paymos.io)
+  --token-file PATH  OAuth token store path override
+  --no-login         Write client configuration without opening browser login
+  --dry-run          Preview client configurations without logging in or writing
+  --help, -h         Show this help
+
+Without --client, auth detects installed clients automatically or asks you to
+choose one in an interactive terminal. Tokens are saved outside your IDE config
+under OS-protected file permissions.`,
+  chooseClient: "Choose your MCP client",
+  preview: (client: string, path: string, name: string) =>
+    `Preview for ${client} (${name}) in ${path}. No files were changed.`,
+  configured: (client: string, path: string, name: string) =>
+    `Configured Paymos Merchant MCP (${name}) for ${client} in ${path}.`,
+  unchanged: (client: string, path: string, name: string) =>
+    `Paymos Merchant MCP (${name}) already matches in ${path}.`,
+  signedIn: (origin: string) => `Signed in to Paymos (${origin}).`,
+  restart: "Restart or reconnect your MCP client to load Paymos Merchant MCP.",
   errors: {
-    client_required: "Choose your client with --client codex or --client claude-code.",
+    arguments: "Check the auth options: an option is unknown, repeated, or missing its value. Run auth --help for usage.",
+    client_required: "Choose your client with --client (run auth --help for supported client names).",
+    config_required: "This client needs a configuration path. Add --config with the path to its MCP configuration file.",
+    invalid_origin: "Origin must use https:// or loopback http://127.0.0.1 / http://localhost.",
     configuration_conflict: "A Paymos entry conflicts with this connection or changed during setup. Review your MCP settings and try again.",
-    configuration_scope_unknown: "The effective MCP configuration could not be verified. Use Authenticate in your client's MCP settings.",
-    client_installation_unknown: "A supported client installation could not be verified. Use Authenticate in your client's MCP settings or run its native mcp login command.",
+    configuration_scope_unknown: "The target MCP configuration path could not be verified safely.",
     auth_cancelled: "Sign-in was cancelled.",
-    auth_failed: "The client could not complete sign-in. Check its output for details.",
+    auth_failed: "Paymos browser sign-in could not complete.",
     configuration_restore_skipped: "Could not restore the previous MCP settings. Review your client's configuration before retrying.",
     configuration_write_failed: "Could not save the MCP settings. Check the file and its permissions.",
   },

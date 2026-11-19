@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-19
+
+- fix(mcp): build dist before tests in clean release preflight
+- feat(mcp): universal one-command OAuth connect across AI clients
+- fix(mcp): CLI --file flag for Node 22+, WebBackend PaymentChannels config, and full live E2E evidence
+
+- feat(mcp): connect a merchant account from Codex or Claude Code through Paymos OAuth, with Owner consent and dashboard connection management
+- feat(mcp): add proof-bound `install-secret`, `upload-file`, and `download-file` helpers alongside local Sandbox
+
 ## [1.6.0] - 2026-11-18
 
 - feat(mcp): implement merchant-mcp-phase2 OAuth 2.1 host, dashboard parity, and CLI

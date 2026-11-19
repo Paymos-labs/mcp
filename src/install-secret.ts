@@ -1,13 +1,17 @@
-import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { lstatSync, mkdirSync, readdirSync, realpathSync, unlinkSync, type BigIntStats } from "node:fs";
+import { mkdirSync, readdirSync, realpathSync, unlinkSync, type BigIntStats } from "node:fs";
 import { userInfo } from "node:os";
 import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import type { ReadableStreamReadResult } from "node:stream/web";
 import { parseEnv } from "node:util";
 import { MerchantDeliveryError } from "./gate.js";
+import {
+  ordinaryDirectory, pathStat, privateMode, sameOpenFile, samePath, windowsStateAcl,
+} from "./private-state.js";
 import { assertUnchanged, object, parseConfig, snapshot, writeConfig } from "./setup.js";
 import { withDestinationLock } from "./setup-lock.js";
+
+export { sameOpenFile };
 
 const origin = "https://app.paymos.io";
 const resource = "/connect/merchant-mcp";
@@ -15,92 +19,6 @@ const lifetimeMs = 5 * 60_000;
 const requestTimeoutMs = 60_000;
 const stateFolder = ".paymos-mcp-delivery";
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
-
-// Windows PowerShell 5.1's .NET Framework APIs can supply an ACL when creating
-// the object. A protected directory gives its lock files the same SID-only ACL.
-const windowsStateScript = String.raw`
-using namespace System.IO
-using namespace System.Security.AccessControl
-using namespace System.Security.Principal
-
-$ErrorActionPreference = 'Stop'
-try {
-  $path = [Environment]::GetEnvironmentVariable('PAYMOS_DELIVERY_STATE_PATH')
-  $action = [Environment]::GetEnvironmentVariable('PAYMOS_DELIVERY_STATE_ACTION')
-  $sid = [WindowsIdentity]::GetCurrent().User
-  $rights = [FileSystemRights]::FullControl
-  $sections = [AccessControlSections]'Access, Owner'
-
-  function New-PrivateAcl([bool] $directory) {
-    if ($directory) {
-      $acl = [DirectorySecurity]::new()
-      $inheritance = [InheritanceFlags]'ContainerInherit, ObjectInherit'
-    } else {
-      $acl = [FileSecurity]::new()
-      $inheritance = [InheritanceFlags]::None
-    }
-    $acl.SetOwner($sid)
-    $acl.SetAccessRuleProtection($true, $false)
-    $acl.AddAccessRule([FileSystemAccessRule]::new($sid, $rights, $inheritance,
-      [PropagationFlags]::None, [AccessControlType]::Allow))
-    return $acl
-  }
-
-  function Assert-OrdinaryPath([string] $item, [bool] $directory) {
-    $attributes = [File]::GetAttributes($item)
-    if (($attributes -band [FileAttributes]::ReparsePoint) -or
-        ([bool]($attributes -band [FileAttributes]::Directory) -ne $directory)) {
-      throw 'Unexpected filesystem object'
-    }
-  }
-
-  function Assert-PrivateAcl([FileSystemSecurity] $acl, [AceFlags] $flags) {
-    $descriptor = [RawSecurityDescriptor]::new($acl.GetSecurityDescriptorBinaryForm(), 0)
-    if (!$acl.AreAccessRulesProtected -or $descriptor.Owner.Value -ne $sid.Value -or
-        $descriptor.DiscretionaryAcl.Count -ne 1) { throw 'Unexpected state ACL' }
-    $rule = $descriptor.DiscretionaryAcl[0]
-    if ($rule.AceType -ne [AceType]::AccessAllowed -or $rule.AceFlags -ne $flags -or
-        $rule.AccessMask -ne [int]$rights -or $rule.SecurityIdentifier.Value -ne $sid.Value) {
-      throw 'Unexpected state access rule'
-    }
-  }
-
-  function Assert-PrivateDirectory([string] $directory) {
-    Assert-OrdinaryPath $directory $true
-    Assert-PrivateAcl ([Directory]::GetAccessControl($directory, $sections)) ([AceFlags]'ContainerInherit, ObjectInherit')
-  }
-
-  switch ($action) {
-    'write-file' {
-      $directory = [Path]::GetDirectoryName($path)
-      Assert-OrdinaryPath ([Path]::GetDirectoryName($directory)) $true
-      [void][Directory]::CreateDirectory($directory, (New-PrivateAcl $true))
-      Assert-PrivateDirectory $directory
-      $staged = [Path]::Combine($directory, '.paymos-' + [Guid]::NewGuid().ToString('N') + '.tmp')
-      $file = [FileStream]::new($staged, [FileMode]::CreateNew, $rights,
-        [FileShare]::None, 4096, [FileOptions]::None, (New-PrivateAcl $false))
-      try {
-        try {
-          Assert-PrivateAcl ($file.GetAccessControl()) ([AceFlags]::None)
-          [Console]::OpenStandardInput().CopyTo($file)
-          $file.Flush($true)
-        } finally { $file.Dispose() }
-        # Same-directory move keeps the protected ACL and refuses to replace an existing file.
-        [File]::Move($staged, $path)
-      } catch {
-        [File]::Delete($staged)
-        throw
-      }
-    }
-    'check-file' {
-      Assert-PrivateDirectory ([Path]::GetDirectoryName($path))
-      Assert-OrdinaryPath $path $false
-      Assert-PrivateAcl ([File]::GetAccessControl($path, $sections)) ([AceFlags]::None)
-    }
-    default { throw 'Unexpected action' }
-  }
-} catch { exit 1 }
-`;
 
 export type DeliveryKind = "install-secret" | "upload-file" | "download-file";
 type Scope = { merchantId: string; environment: "sandbox" | "production"; operationId: string };
@@ -153,11 +71,13 @@ function validUuid(value: unknown): value is string {
 }
 
 export function deliveryArguments(argv: readonly string[], kind: DeliveryKind): Prepare | Redeem {
-  const fileOption = kind === "install-secret" ? "--env-file" : "--file";
-  const common = [fileOption, "--merchant-id", "--environment", "--operation-id", "--request-id", "--token"];
+  const common = ["--file", "--merchant-id", "--environment", "--operation-id", "--request-id", "--token"];
   const flags = new Map<string, string>();
   for (let i = 0; i < argv.length; i++) {
-    const flag = argv[i]!;
+    const raw = argv[i]!;
+    // Node.js >= 20.6 parses `--env-file` before executing the script; prefer `--file` across all helpers
+    // while preserving backward compatibility for legacy `--env-file` callers of `install-secret`.
+    const flag = kind === "install-secret" && raw === "--env-file" ? "--file" : raw;
     if (flags.has(flag)) failDelivery("delivery_arguments");
     if (flag === "--prepare") { flags.set(flag, ""); continue; }
     if (!common.includes(flag)) failDelivery("delivery_arguments");
@@ -165,7 +85,7 @@ export function deliveryArguments(argv: readonly string[], kind: DeliveryKind): 
     if (!value || value.startsWith("--")) failDelivery("delivery_arguments");
     flags.set(flag, value);
   }
-  const file = flags.get(fileOption);
+  const file = flags.get("--file");
   if (!file) return failDelivery("delivery_arguments");
   if (flags.has("--prepare")) {
     const merchantId = flags.get("--merchant-id")?.toLowerCase();
@@ -185,46 +105,17 @@ export function deliveryArguments(argv: readonly string[], kind: DeliveryKind): 
   return { prepare: false, file, requestId, ticket };
 }
 
-function pathStat(path: string) { return lstatSync(path, { bigint: true, throwIfNoEntry: false }); }
-
-export function sameOpenFile(path: BigIntStats, opened: BigIntStats): boolean {
-  return path.isFile() && opened.isFile() && path.ino === opened.ino && path.birthtimeNs === opened.birthtimeNs
-    && (path.dev === 0n || opened.dev === 0n || path.dev === opened.dev);
-}
-
-function samePath(left: string, right: string, platform: NodeJS.Platform): boolean {
-  return platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
-}
-
 function inside(directory: string, path: string): boolean {
   const child = relative(directory, path);
   return child !== ".." && !child.startsWith(".." + sep) && !isAbsolute(child);
 }
 
-function ordinaryDirectory(path: string, platform: NodeJS.Platform): boolean {
-  return !!pathStat(path)?.isDirectory() && samePath(realpathSync(path), path, platform);
-}
-
-type WindowsStateAction = "write-file" | "check-file";
-
-function windowsStateAcl(action: WindowsStateAction, path: string, input?: string): void {
-  const systemRoot = process.env.SystemRoot;
-  if (process.platform !== "win32" || !systemRoot || !/^[A-Za-z]:[\\/]/.test(systemRoot)) {
-    return failDelivery("delivery_state_unavailable");
+function runWindowsStateAcl(action: "write-file" | "check-file", path: string, input?: string): void {
+  try {
+    windowsStateAcl(action, path, input);
+  } catch {
+    failDelivery("delivery_state_unavailable");
   }
-  const windows = resolve(systemRoot);
-  const executable = join(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  if (!pathStat(executable)?.isFile() || !samePath(realpathSync(executable), executable, "win32")) {
-    return failDelivery("delivery_state_unavailable");
-  }
-  const result = spawnSync(executable, [
-    "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(windowsStateScript, "utf16le").toString("base64"),
-  ], {
-    cwd: windows, shell: false, stdio: [input === undefined ? "ignore" : "pipe", "ignore", "ignore"],
-    input, timeout: 10_000, windowsHide: true,
-    env: { SystemRoot: windows, PAYMOS_DELIVERY_STATE_ACTION: action, PAYMOS_DELIVERY_STATE_PATH: path },
-  });
-  if (result.error || result.status !== 0) return failDelivery("delivery_state_unavailable");
 }
 
 export function assertDeliveryTarget(target: DeliveryTarget): BigIntStats | undefined {
@@ -288,10 +179,6 @@ function stateDirectory(runtime: DeliveryRuntime, target: DeliveryTarget, create
   }
 }
 
-function privateMode(stat: BigIntStats): boolean {
-  return (stat.mode & 0o077n) === 0n && (process.geteuid === undefined || stat.uid === BigInt(process.geteuid()));
-}
-
 function removeExpiredState(directory: string, runtime: DeliveryRuntime, justWritten?: string): void {
   const cutoff = runtime.now() - lifetimeMs;
   for (const file of readdirSync(directory, { withFileTypes: true })) {
@@ -300,7 +187,7 @@ function removeExpiredState(directory: string, runtime: DeliveryRuntime, justWri
     const stat = pathStat(path);
     if (stat?.isFile() && stat.nlink === 1n && Number(stat.mtimeMs) <= cutoff) {
       try {
-        if (runtime.platform === "win32") windowsStateAcl("check-file", path);
+        if (runtime.platform === "win32") runWindowsStateAcl("check-file", path);
         unlinkSync(path);
       } catch { /* Expiration is still checked when reading state. */ }
     }
@@ -322,7 +209,7 @@ export function prepareDelivery(
   });
   if (runtime.platform === "win32") {
     // The helper copies stdin into the file only after verifying both protected ACLs.
-    windowsStateAcl("write-file", path, state);
+    runWindowsStateAcl("write-file", path, state);
     removeExpiredState(directory, runtime, filename);
   } else {
     removeExpiredState(directory, runtime);
@@ -345,7 +232,7 @@ export function claimDelivery(
         return failDelivery("delivery_state_unavailable");
       }
       // Check the directory and the specific protected file before creating the lock or reading the proof.
-      windowsStateAcl("check-file", path);
+      runWindowsStateAcl("check-file", path);
     }
     return withDestinationLock(path, () => {
       const stat = pathStat(path);
