@@ -1,6 +1,6 @@
 {
   "name": "@paymos/mcp",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Official Paymos MCP server: a local stdio server that lets coding agents (Claude Code, Cursor, custom LLM bots) build and verify a merchant integration against the Paymos sandbox without reading docs.",
   "keywords": [
     "paymos",
@@ -60,7 +60,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "@paymos/sdk": "^2.4.0",
+    "@paymos/sdk": "^2.7.1",
     "jsonc-parser": "3.3.1",
     "smol-toml": "1.9.1",
     "zod": "^4.6.5"
