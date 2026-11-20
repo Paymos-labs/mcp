@@ -161,6 +161,14 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
       },
     });
     expect(CONNECT_INSTRUCTIONS).toContain("recommend_payment_integration");
+    expect(CONNECT_INSTRUCTIONS).toContain("continue_url");
+    expect(CONNECT_INSTRUCTIONS).toContain("operation_id");
+    expect(CONNECT_INSTRUCTIONS).toContain("user_action_required");
+    expect(CONNECT_INSTRUCTIONS).toContain("login_required");
+    expect(CONNECT_INSTRUCTIONS).toContain("XAUT");
+    expect(CONNECT_INSTRUCTIONS).toContain("X-Webhook-Signature");
+    expect(CONNECT_INSTRUCTIONS).toContain("is_final");
+    expect(CONNECT_INSTRUCTIONS).toContain("event_id");
     expect(responses[1]).toEqual({ jsonrpc: "2.0", id: 2, result: {} });
     const resourcesResult = responses[2]!.result as { resources: Array<{ uri: string; mimeType: string }> };
     expect(resourcesResult.resources).toHaveLength(27);
@@ -818,5 +826,367 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
     await expect(run2).resolves.toBe(0);
     expect(JSON.parse((resp2!.result as { content: Array<{ text: string }> }).content[0]!.text)).toEqual({ valid: true });
     expect(io2.allStdout() + io2.allStderr()).not.toContain(envSecret);
+  });
+
+  it("returns non-blocking login_required with authorize_url, completes login from another browser, and shuts down cleanly on stdin.end()", async () => {
+    const tokenFile = makeTempTokenFile();
+    const origin = "https://dev-local.paymos.io";
+    const issuer = `${origin}/`;
+    const openedUrls: string[] = [];
+
+    const fetchMock = mockAuthFetch(origin, issuer, async (url, init) => {
+      if (url === `${origin}/connect/token`) {
+        return Response.json({
+          access_token: "at_other_browser_1",
+          refresh_token: "rt_other_browser_1",
+          expires_in: 300,
+        });
+      }
+      if (url === `${origin}/connect/merchant-mcp`) {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer at_other_browser_1");
+        const rpc = JSON.parse(String(init?.body ?? "{}")) as { id: string | number };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: { content: [{ type: "text", text: JSON.stringify({ connected: true }) }] },
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const io = createPipeSession();
+    const run = runConnect(["--origin", origin, "--token-file", tokenFile], {}, {
+      stdin: io.stdin,
+      stdout: io.stdout,
+      stderr: io.stderr,
+      fetch: fetchMock,
+      loginFastPathMs: 25,
+      loginTimeoutMs: 60_000,
+      openBrowser: rawUrl => {
+        openedUrls.push(rawUrl);
+      },
+    });
+
+    // 1. Two concurrent remote calls before login -> single browser open, both return user_action_required + login_required.
+    io.send({ jsonrpc: "2.0", id: "login_1", method: "tools/call", params: { name: "get_connection_status", arguments: {} } });
+    io.send({ jsonrpc: "2.0", id: "login_2", method: "tools/call", params: { name: "get_connection_status", arguments: {} } });
+    const firstWave = await io.readResponses(2);
+
+    expect(openedUrls).toHaveLength(1);
+    const expectedUrl = openedUrls[0]!;
+    expect(expectedUrl).toMatch(/^https:\/\/dev-local\.paymos\.io\/connect\/authorize\?/);
+
+    for (const resp of firstWave) {
+      const result = resp.result as {
+        isError?: boolean;
+        structuredContent: Record<string, unknown>;
+        content: Array<{ type: string; text: string }>;
+      };
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        status: "user_action_required",
+        reason: "login_required",
+        continue_url: expectedUrl,
+        authorize_url: expectedUrl,
+        browser_opened: true,
+      });
+      expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
+    }
+
+    // 2. Simulate user completing login in another browser via the printed/returned URL.
+    const authUrl = new URL(expectedUrl);
+    const redirect = new URL(authUrl.searchParams.get("redirect_uri")!);
+    redirect.searchParams.set("code", "code_second_browser");
+    redirect.searchParams.set("state", authUrl.searchParams.get("state")!);
+    redirect.searchParams.set("iss", issuer);
+    const cbResp = await fetch(redirect);
+    expect(cbResp.status).toBe(200);
+
+    // Wait briefly for background exchange + token save.
+    for (let i = 0; i < 40 && !readTokenStore(tokenFile).origins[origin]; i++) {
+      await new Promise(resolve => setTimeout(resolve, 15));
+    }
+    expect(readTokenStore(tokenFile).origins[origin]?.access_token).toBe("at_other_browser_1");
+
+    // 3. Subsequent call succeeds without opening another browser tab.
+    io.send({ jsonrpc: "2.0", id: "after_login", method: "tools/call", params: { name: "get_connection_status", arguments: {} } });
+    const [afterResp] = await io.readResponses(1);
+    expect(afterResp).toEqual({
+      jsonrpc: "2.0",
+      id: "after_login",
+      result: { content: [{ type: "text", text: JSON.stringify({ connected: true }) }] },
+    });
+    expect(openedUrls).toHaveLength(1);
+
+    io.stdin.end();
+    await expect(run).resolves.toBe(0);
+
+    // 4. Clean shutdown on stdin.end() aborts any pending background loopback listener immediately.
+    const pendingTokenFile = makeTempTokenFile();
+    const pendingOpens: string[] = [];
+    const ioPending = createPipeSession();
+    const runPending = runConnect(["--origin", origin, "--token-file", pendingTokenFile], {}, {
+      stdin: ioPending.stdin,
+      stdout: ioPending.stdout,
+      stderr: ioPending.stderr,
+      fetch: fetchMock,
+      loginFastPathMs: 20,
+      loginTimeoutMs: 60_000,
+      openBrowser: rawUrl => {
+        pendingOpens.push(rawUrl);
+      },
+    });
+    ioPending.send({ jsonrpc: "2.0", id: "pending_only", method: "tools/call", params: { name: "get_connection_status", arguments: {} } });
+    await ioPending.readResponses(1);
+    const pendingRedirect = new URL(new URL(pendingOpens[0]!).searchParams.get("redirect_uri")!);
+    ioPending.stdin.end();
+    await expect(runPending).resolves.toBe(0);
+    await expect(fetch(pendingRedirect)).rejects.toThrow();
+  });
+
+  it("auto-opens safe relative/absolute continue_url once per 60s, rewrites full URLs, and blocks unsafe URLs", async () => {
+    const tokenFile = makeTempTokenFile();
+    const origin = "https://app.paymos.io";
+    const issuer = `${origin}/`;
+    let nowMs = 1_700_000_000_000;
+    const openedUrls: string[] = [];
+
+    saveTokenStore(tokenFile, {
+      version: 1,
+      origins: {
+        [origin]: {
+          access_token: "at_stepup_valid",
+          refresh_token: "rt_stepup_valid",
+          expires_at: nowMs + 300_000,
+          issuer,
+        },
+      },
+    });
+
+    const ticketA = "ctk_" + "a".repeat(43);
+    const ticketB = "ctk_" + "b".repeat(43);
+    const ticketEvil = "ctk_" + "e".repeat(43);
+    const responsesById: Record<string, string> = {
+      rel_1: `/connect/merchant-mcp/continue/${ticketA}`,
+      rel_dup: `/connect/merchant-mcp/continue/${ticketA}`,
+      rel_after_60s: `/connect/merchant-mcp/continue/${ticketA}`,
+      abs_same: `https://app.paymos.io/connect/merchant-mcp/continue/${ticketB}`,
+      evil_origin: `https://evil.test/connect/merchant-mcp/continue/${ticketEvil}`,
+      evil_js: "javascript:alert(1)",
+      evil_path: "/accounts/1",
+      evil_query: `/connect/merchant-mcp/continue/${ticketEvil}?x=1`,
+    };
+
+    const fetchMock = mockAuthFetch(origin, issuer, async (url, init) => {
+      if (url === `${origin}/connect/merchant-mcp`) {
+        const rpc = JSON.parse(String(init?.body ?? "{}")) as { id: string };
+        const continueUrl = responsesById[rpc.id]!;
+        const payload = {
+          status: "user_action_required",
+          continue_url: continueUrl,
+          operation_id: `op_${rpc.id}`,
+        };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: {
+            structuredContent: payload,
+            content: [{ type: "text", text: JSON.stringify(payload) }],
+          },
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const io = createPipeSession();
+    const run = runConnect(["--origin", origin, "--token-file", tokenFile], {}, {
+      stdin: io.stdin,
+      stdout: io.stdout,
+      stderr: io.stderr,
+      fetch: fetchMock,
+      now: () => nowMs,
+      openBrowser: rawUrl => {
+        openedUrls.push(rawUrl);
+      },
+    });
+
+    const sendAndRead = async (id: string) => {
+      io.send({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "merchant_create_api_credential", arguments: {} } });
+      const [resp] = await io.readResponses(1);
+      return resp!.result as {
+        structuredContent: Record<string, unknown>;
+        content: Array<{ type: string; text: string }>;
+      };
+    };
+
+    // 1. Relative safe path -> rewritten to full HTTPS URL in both structuredContent and content[].text, opened once.
+    const r1 = await sendAndRead("rel_1");
+    const fullA = `https://app.paymos.io/connect/merchant-mcp/continue/${ticketA}`;
+    expect(r1.structuredContent.continue_url).toBe(fullA);
+    expect(JSON.parse(r1.content[0]!.text).continue_url).toBe(fullA);
+    expect(openedUrls).toEqual([fullA]);
+
+    // 2. Retry within 60s -> still rewritten, NOT re-opened.
+    nowMs += 59_999;
+    const rDup = await sendAndRead("rel_dup");
+    expect(rDup.structuredContent.continue_url).toBe(fullA);
+    expect(openedUrls).toEqual([fullA]);
+
+    // 3. Retry at >= 60s -> opened again.
+    nowMs += 1;
+    const rAfter = await sendAndRead("rel_after_60s");
+    expect(rAfter.structuredContent.continue_url).toBe(fullA);
+    expect(openedUrls).toEqual([fullA, fullA]);
+
+    // 4. Absolute same-origin URL -> opened and preserved.
+    const rAbs = await sendAndRead("abs_same");
+    const fullB = `https://app.paymos.io/connect/merchant-mcp/continue/${ticketB}`;
+    expect(rAbs.structuredContent.continue_url).toBe(fullB);
+    expect(JSON.parse(rAbs.content[0]!.text).continue_url).toBe(fullB);
+    expect(openedUrls).toEqual([fullA, fullA, fullB]);
+
+    // 5. Cross-origin, javascript:, wrong path, and query-string URLs NEVER invoke openBrowser.
+    for (const evilId of ["evil_origin", "evil_js", "evil_path", "evil_query"]) {
+      const rEvil = await sendAndRead(evilId);
+      expect(rEvil.structuredContent.continue_url).toBe(responsesById[evilId]);
+    }
+    expect(openedUrls).toEqual([fullA, fullA, fullB]);
+
+    io.stdin.end();
+    await expect(run).resolves.toBe(0);
+  });
+
+  it("falls back to non-blocking login_required when 401 refresh is revoked and deduplicates concurrent user_action_required openings", async () => {
+    // 1. 401 + revoked refresh_token -> clears token store and returns login_required with authorize_url.
+    const revokedTokenFile = makeTempTokenFile();
+    const origin = "https://dev-local.paymos.io";
+    const issuer = `${origin}/`;
+    const nowMs = 1_700_000_000_000;
+    saveTokenStore(revokedTokenFile, {
+      version: 1,
+      origins: {
+        [origin]: {
+          access_token: "at_revoked_1",
+          refresh_token: "rt_revoked_1",
+          expires_at: nowMs + 300_000,
+          issuer,
+        },
+      },
+    });
+
+    const openedReauthUrls: string[] = [];
+    const fetchRevoked = mockAuthFetch(origin, issuer, (url, init) => {
+      if (url === `${origin}/connect/merchant-mcp`) {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer at_revoked_1");
+        return new Response("Unauthorized", { status: 401 });
+      }
+      if (url === `${origin}/connect/token`) {
+        const params = new URLSearchParams(String(init?.body ?? ""));
+        expect(params.get("grant_type")).toBe("refresh_token");
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const ioRevoked = createPipeSession();
+    const runRevoked = runConnect(["--origin", origin, "--token-file", revokedTokenFile], {}, {
+      stdin: ioRevoked.stdin,
+      stdout: ioRevoked.stdout,
+      stderr: ioRevoked.stderr,
+      fetch: fetchRevoked,
+      now: () => nowMs,
+      loginFastPathMs: 25,
+      loginTimeoutMs: 60_000,
+      openBrowser: rawUrl => {
+        openedReauthUrls.push(rawUrl);
+      },
+    });
+
+    ioRevoked.send({ jsonrpc: "2.0", id: "revoked_1", method: "tools/call", params: { name: "get_connection_status", arguments: {} } });
+    const [revokedResp] = await ioRevoked.readResponses(1);
+    expect(openedReauthUrls).toHaveLength(1);
+    expect(revokedResp!.result).toMatchObject({
+      structuredContent: {
+        status: "user_action_required",
+        reason: "login_required",
+        continue_url: openedReauthUrls[0]!,
+        authorize_url: openedReauthUrls[0]!,
+        browser_opened: true,
+      },
+    });
+    expect(readTokenStore(revokedTokenFile).origins[origin]).toBeUndefined();
+    ioRevoked.stdin.end();
+    await expect(runRevoked).resolves.toBe(0);
+
+    // 2. Concurrent user_action_required responses with identical continue_url open the browser only once.
+    const parTokenFile = makeTempTokenFile();
+    const parOrigin = "https://app.paymos.io";
+    const parIssuer = `${parOrigin}/`;
+    saveTokenStore(parTokenFile, {
+      version: 1,
+      origins: {
+        [parOrigin]: {
+          access_token: "at_parallel_valid",
+          refresh_token: "rt_parallel_valid",
+          expires_at: nowMs + 300_000,
+          issuer: parIssuer,
+        },
+      },
+    });
+
+    const sharedTicket = "ctk_" + "p".repeat(43);
+    const sharedFullUrl = `${parOrigin}/connect/merchant-mcp/continue/${sharedTicket}`;
+    const parOpenedUrls: string[] = [];
+    const fetchPar = mockAuthFetch(parOrigin, parIssuer, (url, init) => {
+      if (url === `${parOrigin}/connect/merchant-mcp`) {
+        const rpc = JSON.parse(String(init?.body ?? "{}")) as { id: string };
+        const payload = {
+          status: "user_action_required",
+          continue_url: `/connect/merchant-mcp/continue/${sharedTicket}`,
+          operation_id: `op_${rpc.id}`,
+        };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: rpc.id,
+          result: {
+            structuredContent: payload,
+            content: [{ type: "text", text: JSON.stringify(payload) }],
+          },
+        });
+      }
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const ioPar = createPipeSession();
+    const openBrowserSpy = vi.fn(async (rawUrl: string) => {
+      parOpenedUrls.push(rawUrl);
+      await new Promise(resolve => setTimeout(resolve, 35));
+    });
+    const runPar = runConnect(["--origin", parOrigin, "--token-file", parTokenFile], {}, {
+      stdin: ioPar.stdin,
+      stdout: ioPar.stdout,
+      stderr: ioPar.stderr,
+      fetch: fetchPar,
+      now: () => nowMs,
+      openBrowser: openBrowserSpy,
+    });
+
+    ioPar.send({ jsonrpc: "2.0", id: "par_1", method: "tools/call", params: { name: "merchant_create_api_credential", arguments: {} } });
+    ioPar.send({ jsonrpc: "2.0", id: "par_2", method: "tools/call", params: { name: "merchant_create_api_credential", arguments: {} } });
+    const parResponses = await ioPar.readResponses(2);
+
+    expect(openBrowserSpy).toHaveBeenCalledTimes(1);
+    expect(parOpenedUrls).toEqual([sharedFullUrl]);
+    for (const resp of parResponses) {
+      const result = resp.result as {
+        structuredContent: Record<string, unknown>;
+        content: Array<{ type: string; text: string }>;
+      };
+      expect(result.structuredContent.continue_url).toBe(sharedFullUrl);
+      expect(JSON.parse(result.content[0]!.text).continue_url).toBe(sharedFullUrl);
+    }
+
+    ioPar.stdin.end();
+    await expect(runPar).resolves.toBe(0);
   });
 });

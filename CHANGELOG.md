@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-11-20
+
+- feat(mcp): unify 6-cell 2FA step-up UI and dual browser-open + URL handoff
+
+- feat(mcp): auto-open default browser and print/return full clickable `continue_url` and `authorize_url` handoff links in `connect`, `setup`, and `auth` with non-blocking background OAuth PKCE for any browser alongside canonical 6-cell TOTP + Passkey confirmation
+- feat(mcp): make `npx -y @paymos/mcp setup` the single zero-key onboarding entrypoint with optional `[Y/n]` browser OAuth sign-in, moving key-based Sandbox flow under `--sandbox`
+- feat(mcp): compile `27` Paymos documentation pages (`paymos://docs/*`), `CONNECT_INSTRUCTIONS`, and offline `paymos_auth_status`, `recommend_payment_integration` (12 CMS + widget + POS + invoices + channels), and `verify_webhook_signature` tools into `connect` (`191` tools total before login)
+- ui(dashboard): unify `/developers/agents` around `npx -y @paymos/mcp setup` and direct MCP URL
+- feat(mcp): connect a merchant account from Codex or Claude Code through Paymos OAuth, with Owner consent and dashboard connection management
+- feat(mcp): add proof-bound `install-secret`, `upload-file`, and `download-file` helpers alongside local Sandbox
+
 ## [1.8.0] - 2026-11-19
 
 - feat(mcp): make setup universal with advisor mode and fix consent scroll

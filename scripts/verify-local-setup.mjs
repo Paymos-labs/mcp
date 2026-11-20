@@ -121,6 +121,8 @@ try {
   assert.match(instructions, /paymos_auth_status/);
   assert.match(instructions, /recommend_payment_integration/);
   assert.match(instructions, /verify_webhook_signature/);
+  assert.match(instructions, /continue_url/);
+  assert.match(instructions, /operation_id/);
 
   const connectResources = (await connectClient.listResources()).resources;
   assert.equal(connectResources.length, 27);

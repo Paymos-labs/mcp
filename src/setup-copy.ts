@@ -93,6 +93,8 @@ under OS-protected file permissions.`,
   unchanged: (client: string, path: string, name: string) =>
     `Paymos Merchant MCP (${name}) already matches in ${path}.`,
   signedIn: (origin: string) => `Signed in to Paymos (${origin}).`,
+  openingBrowser: (url: string) =>
+    `Opening Paymos sign-in in your browser. To use another browser, open: ${url}`,
   restart: "Restart or reconnect your MCP client to load Paymos Merchant MCP.",
   errors: {
     arguments: "Check the auth options: an option is unknown, repeated, or missing its value. Run auth --help for usage.",

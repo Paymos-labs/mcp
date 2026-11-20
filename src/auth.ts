@@ -488,6 +488,10 @@ export async function runAuth(
         tokenFile,
         env,
         ...sessionHooks,
+        onAuthUrl: url => {
+          io.log(AUTH_COPY.openingBrowser(url));
+          sessionHooks.onAuthUrl?.(url);
+        },
       });
       io.log(AUTH_COPY.signedIn(origin));
     } catch (cause) {

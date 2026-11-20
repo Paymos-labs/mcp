@@ -617,6 +617,10 @@ export async function runSetup(
       tokenFile,
       env,
       ...sessionHooks,
+      onAuthUrl: url => {
+        io.log(AUTH_COPY.openingBrowser(url));
+        sessionHooks.onAuthUrl?.(url);
+      },
     });
     io.log(AUTH_COPY.signedIn(origin));
     if (wroteAny) io.log(SETUP_COPY.restart);

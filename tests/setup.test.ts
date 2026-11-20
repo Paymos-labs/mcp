@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildConnectEntry } from "../src/auth.js";
 import { readTokenStore } from "../src/oauth-session.js";
 import { defaultConfigPath, planClientConfig, runSetup, type SetupIO } from "../src/setup.js";
-import { SETUP_COPY } from "../src/setup-copy.js";
+import { AUTH_COPY, SETUP_COPY } from "../src/setup-copy.js";
 import { readCredentialFile } from "../src/credential-file.js";
 import { LOCK_SUFFIX } from "../src/setup-lock.js";
 
@@ -483,6 +483,7 @@ describe("universal zero-key setup", process.platform === "win32" ? { timeout: 2
     // 1. "y": config exists on disk before ask() is even called; loginWithBrowser runs after.
     const fYes = universalFixture("linux");
     const oauthYes = mockBrowserOAuth("https://dev-local.paymos.io", "approve");
+    const seenYesUrls: string[] = [];
     const codexPath = defaultConfigPath("codex", fYes.env, fYes.context);
     save(codexPath, "# keep\n");
     const askYes = vi.fn(async () => {
@@ -495,13 +496,19 @@ describe("universal zero-key setup", process.platform === "win32" ? { timeout: 2
         fYes.env,
         { ...fYes.io, interactive: true, ask: askYes },
         fYes.context,
-        oauthYes.hooks,
+        { ...oauthYes.hooks, onAuthUrl: url => seenYesUrls.push(url) },
       ),
     ).resolves.toBe(0);
     expect(askYes).toHaveBeenCalledTimes(1);
     expect(oauthYes.getOpenCalls()).toBe(1);
+    expect(seenYesUrls).toHaveLength(1);
+    expect(seenYesUrls[0]).toMatch(/^https:\/\/dev-local\.paymos\.io\/connect\/authorize\?/);
+    const yesOpenIdx = fYes.logs.indexOf(AUTH_COPY.openingBrowser(seenYesUrls[0]!));
+    const yesSignedIdx = fYes.logs.indexOf(AUTH_COPY.signedIn("https://dev-local.paymos.io"));
+    expect(yesOpenIdx).toBeGreaterThanOrEqual(0);
+    expect(yesSignedIdx).toBeGreaterThan(yesOpenIdx);
     expect(readTokenStore(fYes.tokenFile).origins["https://dev-local.paymos.io"]?.access_token).toBe("at_setup_oauth_1");
-    expect(fYes.logs.join("\n")).toContain(SETUP_COPY.restart);
+    expect(fYes.logs.at(-1)).toBe(SETUP_COPY.restart);
 
     // 2. "" (Enter): same browser login.
     const fEnter = universalFixture("linux");
@@ -517,6 +524,8 @@ describe("universal zero-key setup", process.platform === "win32" ? { timeout: 2
       ),
     ).resolves.toBe(0);
     expect(oauthEnter.getOpenCalls()).toBe(1);
+    expect(fEnter.logs.some(line => line.includes("https://app.paymos.io/connect/authorize?"))).toBe(true);
+    expect(fEnter.logs.at(-1)).toBe(SETUP_COPY.restart);
 
     // 3. "n": keeps written config, 0 browser calls, logs referenceReady + restart, exits 0.
     const fNo = universalFixture("linux");

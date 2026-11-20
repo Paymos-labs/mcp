@@ -8,8 +8,8 @@ import { CONNECT_INSTRUCTIONS, LOCAL_CONNECT_TOOLS, tryHandleLocalConnectTool } 
 import { MERCHANT_TOOLS } from "./generated/merchant-tools.js";
 import { CONNECT_DOC_RESOURCES } from "./generated/resources.js";
 import {
-  defaultTokenPath, MERCHANT_MCP_RESOURCE_PATH, requireAccessToken,
-  tryGetAccessToken, validateOrigin, type OAuthSessionOptions,
+  acquireConnectAccessToken, defaultTokenPath, MERCHANT_MCP_RESOURCE_PATH, openUrlInBrowser,
+  resolveSafeContinuationUrl, tryGetAccessToken, validateOrigin, type OAuthSessionOptions,
 } from "./oauth-session.js";
 import { MCP_VERSION } from "./version.js";
 
@@ -41,10 +41,13 @@ export interface ConnectRuntimeOptions {
   readonly toolsListTimeoutMs?: number;
   readonly toolsCallTimeoutMs?: number;
   readonly loginTimeoutMs?: number;
+  readonly loginFastPathMs?: number;
 }
 
 const TOOLS_LIST_TIMEOUT_MS = 5_000;
 const TOOLS_CALL_TIMEOUT_MS = 120_000;
+const CONTINUATION_OPEN_DEDUP_MS = 60_000;
+const MAX_OPENED_CONTINUATIONS = 128;
 const CONNECT_DOC_BY_URI = new Map(CONNECT_DOC_RESOURCES.map(item => [item.uri, item]));
 const LOCAL_TOOL_NAMES = new Set(LOCAL_CONNECT_TOOLS.map(tool => tool.name));
 
@@ -271,6 +274,112 @@ async function postRemoteMcp(
   };
 }
 
+function buildLoginRequiredResult(authorizeUrl: string): Record<string, unknown> {
+  const payload = {
+    status: "user_action_required",
+    reason: "login_required",
+    continue_url: authorizeUrl,
+    authorize_url: authorizeUrl,
+    browser_opened: true,
+    message:
+      "Paymos sign-in opened in your default browser. To use a different browser or profile, copy continue_url into that browser and approve access, then retry this tool call.",
+  };
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+    structuredContent: payload,
+  };
+}
+
+function rememberOpenedContinuation(cache: Map<string, number>, url: string, timestamp: number): void {
+  if (cache.has(url)) {
+    cache.delete(url);
+  } else if (cache.size >= MAX_OPENED_CONTINUATIONS) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey !== undefined) cache.delete(oldestKey);
+  }
+  cache.set(url, timestamp);
+}
+
+async function normalizeAndOpenContinuation(
+  result: Record<string, unknown>,
+  origin: string,
+  openedContinuations: Map<string, number>,
+  now: () => number,
+  openBrowser?: (url: string) => Promise<void> | void,
+): Promise<Record<string, unknown>> {
+  if (result.isError === true) return result;
+
+  let nextStructured = result.structuredContent;
+  const urlsToOpen = new Set<string>();
+
+  if (
+    isPlainObject(result.structuredContent)
+    && result.structuredContent.status === "user_action_required"
+    && typeof result.structuredContent.continue_url === "string"
+  ) {
+    const fullUrl = resolveSafeContinuationUrl(result.structuredContent.continue_url, origin);
+    if (fullUrl !== undefined) {
+      urlsToOpen.add(fullUrl);
+      nextStructured = { ...result.structuredContent, continue_url: fullUrl };
+    }
+  }
+
+  let nextContent = result.content;
+  if (Array.isArray(result.content)) {
+    let contentChanged = false;
+    const mappedContent = result.content.map(item => {
+      if (!isPlainObject(item) || item.type !== "text" || typeof item.text !== "string") {
+        return item;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(item.text);
+      } catch {
+        return item;
+      }
+      if (
+        !isPlainObject(parsed)
+        || parsed.status !== "user_action_required"
+        || typeof parsed.continue_url !== "string"
+      ) {
+        return item;
+      }
+      const fullUrl = resolveSafeContinuationUrl(parsed.continue_url, origin);
+      if (fullUrl === undefined) {
+        return item;
+      }
+      urlsToOpen.add(fullUrl);
+      contentChanged = true;
+      return {
+        ...item,
+        text: JSON.stringify({ ...parsed, continue_url: fullUrl }),
+      };
+    });
+    if (contentChanged) {
+      nextContent = mappedContent;
+    }
+  }
+
+  if (urlsToOpen.size === 0) {
+    return result;
+  }
+
+  for (const fullContinueUrl of urlsToOpen) {
+    const nowMs = now();
+    const lastOpened = openedContinuations.get(fullContinueUrl);
+    if (lastOpened === undefined || nowMs - lastOpened >= CONTINUATION_OPEN_DEDUP_MS) {
+      rememberOpenedContinuation(openedContinuations, fullContinueUrl, nowMs);
+      await openUrlInBrowser(fullContinueUrl, origin, openBrowser);
+    }
+  }
+
+  return {
+    ...result,
+    ...(nextStructured !== result.structuredContent ? { structuredContent: nextStructured } : {}),
+    ...(nextContent !== result.content ? { content: nextContent } : {}),
+  };
+}
+
 export async function runConnect(
   argv: readonly string[],
   env: Env = process.env,
@@ -307,12 +416,22 @@ export async function runConnect(
   const toolsListTimeoutMs = options.toolsListTimeoutMs ?? TOOLS_LIST_TIMEOUT_MS;
   const toolsCallTimeoutMs = options.toolsCallTimeoutMs ?? TOOLS_CALL_TIMEOUT_MS;
 
+  const sessionController = new AbortController();
+  const onExternalAbort = () => sessionController.abort();
+  if (options.signal) {
+    if (options.signal.aborted) sessionController.abort();
+    else options.signal.addEventListener("abort", onExternalAbort, { once: true });
+  }
+
+  const now = options.now ?? Date.now;
+  const openedContinuations = new Map<string, number>();
   const knownSecrets = new Set<string>();
   const baseSessionOptions: OAuthSessionOptions = {
     origin,
     tokenFile,
     env,
     fetch: fetchFn,
+    signal: sessionController.signal,
     onSession: session => {
       knownSecrets.add(session.access_token);
       if (session.refresh_token) knownSecrets.add(session.refresh_token);
@@ -320,8 +439,11 @@ export async function runConnect(
     ...(options.context !== undefined ? { context: options.context } : {}),
     ...(options.openBrowser !== undefined ? { openBrowser: options.openBrowser } : {}),
     ...(options.now !== undefined ? { now: options.now } : {}),
-    ...(options.signal !== undefined ? { signal: options.signal } : {}),
     ...(options.loginTimeoutMs !== undefined ? { loginTimeoutMs: options.loginTimeoutMs } : {}),
+  };
+  const acquireTokenOptions = {
+    ...baseSessionOptions,
+    ...(options.loginFastPathMs !== undefined ? { loginFastPathMs: options.loginFastPathMs } : {}),
   };
 
   let negotiatedProtocol = "2025-06-18";
@@ -338,7 +460,7 @@ export async function runConnect(
   const handleToolsList = async (request: JSONRPCRequest): Promise<void> => {
     const started = Date.now();
     const listAbort = AbortSignal.timeout(toolsListTimeoutMs);
-    const signal = options.signal ? AbortSignal.any([options.signal, listAbort]) : listAbort;
+    const signal = AbortSignal.any([sessionController.signal, listAbort]);
     try {
       const token = await tryGetAccessToken({ ...baseSessionOptions, signal });
       if (!token) {
@@ -382,28 +504,45 @@ export async function runConnect(
 
     let token: string | undefined;
     try {
-      token = await requireAccessToken(baseSessionOptions);
+      let authResult = await acquireConnectAccessToken(acquireTokenOptions);
+      if (authResult.status === "login_required") {
+        await sendResult(request.id, buildLoginRequiredResult(authResult.authorizeUrl));
+        return;
+      }
+      token = authResult.accessToken;
       let outcome = await postRemoteMcp(
         resourceUrl, token, negotiatedProtocol, request, fetchFn, toolsCallTimeoutMs,
-        knownSecrets, remoteSessionId, options.signal,
+        knownSecrets, remoteSessionId, sessionController.signal,
       );
       if (outcome.sessionId) remoteSessionId = outcome.sessionId;
 
       if (outcome.status === 401) {
-        token = await requireAccessToken({
-          ...baseSessionOptions,
+        authResult = await acquireConnectAccessToken({
+          ...acquireTokenOptions,
           forceRefresh: true,
           failedAccessToken: token,
         });
+        if (authResult.status === "login_required") {
+          await sendResult(request.id, buildLoginRequiredResult(authResult.authorizeUrl));
+          return;
+        }
+        token = authResult.accessToken;
         outcome = await postRemoteMcp(
           resourceUrl, token, negotiatedProtocol, request, fetchFn, toolsCallTimeoutMs,
-          knownSecrets, remoteSessionId, options.signal,
+          knownSecrets, remoteSessionId, sessionController.signal,
         );
         if (outcome.sessionId) remoteSessionId = outcome.sessionId;
       }
 
       if (outcome.result) {
-        await sendResult(request.id, outcome.result);
+        const processed = await normalizeAndOpenContinuation(
+          outcome.result,
+          origin,
+          openedContinuations,
+          now,
+          options.openBrowser,
+        );
+        await sendResult(request.id, processed);
         return;
       }
       if (outcome.error) {
@@ -523,28 +662,33 @@ export async function runConnect(
     stderr.write(`[paymos-mcp] transport error: ${error.message}\n`);
   };
 
-  await transport.start();
+  try {
+    await transport.start();
 
-  await new Promise<void>(resolve => {
-    let finished = false;
-    const done = () => {
-      if (finished) return;
-      finished = true;
-      stdin.off("end", done);
-      stdin.off("close", done);
-      options.signal?.removeEventListener("abort", done);
-      resolve();
-    };
-    if (stdin.readableEnded || stdin.destroyed || options.signal?.aborted) {
-      done();
-      return;
-    }
-    stdin.once("end", done);
-    stdin.once("close", done);
-    options.signal?.addEventListener("abort", done, { once: true });
-  });
+    await new Promise<void>(resolve => {
+      let finished = false;
+      const done = () => {
+        if (finished) return;
+        finished = true;
+        stdin.off("end", done);
+        stdin.off("close", done);
+        sessionController.signal.removeEventListener("abort", done);
+        resolve();
+      };
+      if (stdin.readableEnded || stdin.destroyed || sessionController.signal.aborted) {
+        done();
+        return;
+      }
+      stdin.once("end", done);
+      stdin.once("close", done);
+      sessionController.signal.addEventListener("abort", done, { once: true });
+    });
 
-  await Promise.allSettled([...pending]);
-  await transport.close();
+    await Promise.allSettled([...pending]);
+  } finally {
+    sessionController.abort();
+    options.signal?.removeEventListener("abort", onExternalAbort);
+    await transport.close().catch(() => {});
+  }
   return 0;
 }

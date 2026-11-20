@@ -16,7 +16,9 @@ export const MERCHANT_MCP_LOOPBACK_CLIENT_ID = "paymos-merchant-loopback";
 const DEFAULT_TOKEN_LIFETIME_MS = 300_000;
 const DEFAULT_EXPIRY_SKEW_MS = 30_000;
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_LOGIN_FAST_PATH_MS = 1_500;
 const DISCOVERY_TIMEOUT_MS = 10_000;
+const CONTINUATION_PATH_PATTERN = /^\/connect\/merchant-mcp\/continue\/ctk_[A-Za-z0-9_-]{43,86}$/;
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -77,6 +79,19 @@ export interface RequireAccessTokenOptions extends OAuthSessionOptions {
   readonly failedAccessToken?: string;
 }
 
+export interface BrowserLoginFlow {
+  readonly authorizeUrl: Promise<string>;
+  readonly session: Promise<StoredOriginSession>;
+}
+
+export type ConnectAccessTokenResult =
+  | { readonly status: "ready"; readonly accessToken: string }
+  | { readonly status: "login_required"; readonly authorizeUrl: string };
+
+interface PendingBrowserLogin extends BrowserLoginFlow {
+  readonly signal?: AbortSignal;
+}
+
 interface AuthMetadata {
   readonly issuer: string;
   readonly authorizationEndpoint: string;
@@ -86,6 +101,7 @@ interface AuthMetadata {
 const discoveryCache = new WeakMap<typeof fetch, Map<string, AuthMetadata>>();
 const refreshLocks = new Map<string, Promise<string | undefined>>();
 const loginLocks = new Map<string, Promise<StoredOriginSession>>();
+const pendingBrowserLogins = new Map<string, PendingBrowserLogin>();
 
 function isLoopbackHost(hostname: string): boolean {
   return hostname === "127.0.0.1" || hostname === "localhost";
@@ -306,26 +322,103 @@ function safeTimingEqual(left: string, right: string): boolean {
 }
 
 function defaultOpenBrowser(url: string): void {
-  const platform = process.platform;
-  let child;
-  if (platform === "win32") {
-    const systemRoot = process.env.SystemRoot || "C:\\Windows";
-    const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-    child = spawn(powershell, [
-      "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Start-Process $env:PAYMOS_OAUTH_URL",
-    ], {
-      env: { ...process.env, PAYMOS_OAUTH_URL: url },
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-    });
-  } else if (platform === "darwin") {
-    child = spawn("open", [url], { detached: true, stdio: "ignore" });
-  } else {
-    child = spawn("xdg-open", [url], { detached: true, stdio: "ignore" });
+  try {
+    const platform = process.platform;
+    let child;
+    if (platform === "win32") {
+      const systemRoot = process.env.SystemRoot || "C:\\Windows";
+      const powershell = join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+      child = spawn(powershell, [
+        "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Start-Process $env:PAYMOS_OAUTH_URL",
+      ], {
+        env: { ...process.env, PAYMOS_OAUTH_URL: url },
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    } else if (platform === "darwin") {
+      child = spawn("open", [url], { detached: true, stdio: "ignore" });
+    } else {
+      child = spawn("xdg-open", [url], { detached: true, stdio: "ignore" });
+    }
+    child.on("error", () => { /* Ignore headless spawn errors; URL callback timeout handles fallback. */ });
+    child.unref();
+  } catch {
+    /* Ignore headless spawn errors; URL callback timeout handles fallback. */
   }
-  child.on("error", () => { /* Ignore headless spawn errors; URL callback timeout handles fallback. */ });
-  child.unref();
+}
+
+/**
+ * Validates and resolves a continuation URL against `expectedOrigin`,
+ * accepting only same-origin `/connect/merchant-mcp/continue/ctk_...` URLs.
+ */
+export function resolveSafeContinuationUrl(rawUrl: unknown, expectedOrigin: string): string | undefined {
+  if (typeof rawUrl !== "string") return undefined;
+  const trimmed = rawUrl.trim();
+  if (trimmed === "" || trimmed !== rawUrl || /[\s\p{Cc}?#@\\]/u.test(rawUrl)) {
+    return undefined;
+  }
+  try {
+    const normalizedExpected = validateOrigin(expectedOrigin);
+    const url = new URL(rawUrl, normalizedExpected);
+    if (url.username !== "" || url.password !== "" || url.hash !== "" || url.search !== "") {
+      return undefined;
+    }
+    if (validateOrigin(url.origin) !== normalizedExpected) {
+      return undefined;
+    }
+    if (!CONTINUATION_PATH_PATTERN.test(url.pathname)) {
+      return undefined;
+    }
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Opens `url` in a browser after enforcing an origin match against `expectedOrigin`.
+ * Opener failures are suppressed so headless environments never abort the caller.
+ */
+export async function openUrlInBrowser(
+  url: string,
+  expectedOrigin: string,
+  customOpener?: (url: string) => Promise<void> | void,
+): Promise<void> {
+  const normalizedExpected = validateOrigin(expectedOrigin);
+  if (typeof url !== "string") {
+    throw new OAuthSessionError("invalid_origin", "Browser URL must be a string.");
+  }
+  const trimmed = url.trim();
+  if (trimmed === "" || trimmed !== url || /[\s\p{Cc}\\]/u.test(url)) {
+    throw new OAuthSessionError("invalid_origin", "Browser URL contains disallowed whitespace, control characters, or backslashes.");
+  }
+  const schemeSep = url.indexOf("://");
+  if (schemeSep <= 0) {
+    throw new OAuthSessionError("invalid_origin", "Browser URL must include a valid scheme.");
+  }
+  const afterScheme = url.slice(schemeSep + 3);
+  const authorityEnd = afterScheme.search(/[/?#]/);
+  const authority = authorityEnd < 0 ? afterScheme : afterScheme.slice(0, authorityEnd);
+  if (authority.includes("@")) {
+    throw new OAuthSessionError("invalid_origin", "Browser URL must not contain userinfo.");
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new OAuthSessionError("invalid_origin", "Browser URL is not valid.");
+  }
+  if (parsed.username !== "" || parsed.password !== "" || validateOrigin(parsed.origin) !== normalizedExpected) {
+    throw new OAuthSessionError("invalid_origin", "Refusing to open browser URL for unexpected origin.");
+  }
+  const opener = customOpener ?? defaultOpenBrowser;
+  try {
+    await opener(parsed.toString());
+  } catch {
+    /* Ignore headless or desktop-opener failures; caller surfaces the URL directly. */
+  }
 }
 
 function callbackHtml(title: string, message: string): string {
@@ -373,168 +466,216 @@ function resolveSessionParams(options: OAuthSessionOptions) {
   return { env, platform, origin, tokenPath, fetchFn, now, skewMs };
 }
 
-export async function loginWithBrowser(options: OAuthSessionOptions = {}): Promise<StoredOriginSession> {
-  if (options.signal?.aborted) {
-    throw new OAuthSessionError("oauth_cancelled", "Browser authorization was cancelled.");
-  }
-  const { platform, origin, tokenPath, fetchFn, now } = resolveSessionParams(options);
-  const metadata = await discoverAuthMetadata(origin, fetchFn, options.signal);
-
-  const verifier = randomBytes(32).toString("base64url");
-  const challenge = createHash("sha256").update(verifier, "ascii").digest("base64url");
-  const expectedState = randomBytes(32).toString("base64url");
-  const resource = `${origin}${MERCHANT_MCP_RESOURCE_PATH}`;
-
-  let settle!: { resolve: (code: string) => void; reject: (error: Error) => void };
-  const callbackPromise = new Promise<string>((resolve, reject) => {
-    settle = { resolve, reject };
+/**
+ * Starts the loopback OAuth 2.1 PKCE login server and returns separate handles
+ * for the generated authorization URL and the eventual token session.
+ */
+export function startBrowserLoginFlow(options: OAuthSessionOptions = {}): BrowserLoginFlow {
+  let settleAuthUrl!: { resolve: (url: string) => void; reject: (error: unknown) => void };
+  const authorizeUrl = new Promise<string>((resolve, reject) => {
+    settleAuthUrl = { resolve, reject };
   });
-  callbackPromise.catch(() => {});
+  authorizeUrl.catch(() => {});
 
-  const server = createServer((req, res) => {
-    let url: URL;
-    try {
-      url = new URL(req.url ?? "/", "http://127.0.0.1");
-    } catch {
-      res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
-      res.end("Bad request");
-      return;
-    }
-    if (req.method !== "GET" || url.pathname !== "/callback") {
-      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
-      res.end("Not found");
-      return;
-    }
-
-    const reply = (status: number, title: string, message: string) => {
-      res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-      res.end(callbackHtml(title, message));
+  const session = (async (): Promise<StoredOriginSession> => {
+    let authUrlSettled = false;
+    const rejectAuthUrl = (error: unknown) => {
+      if (!authUrlSettled) {
+        authUrlSettled = true;
+        settleAuthUrl.reject(error);
+      }
+    };
+    const resolveAuthUrl = (url: string) => {
+      if (!authUrlSettled) {
+        authUrlSettled = true;
+        settleAuthUrl.resolve(url);
+      }
     };
 
-    const gotState = url.searchParams.get("state");
-    if (!gotState || !safeTimingEqual(gotState, expectedState)) {
-      reply(400, "Paymos sign-in failed", "Authorization state validation failed.");
-      settle.reject(new OAuthSessionError("oauth_state_mismatch", "Callback state did not match."));
-      return;
+    try {
+      if (options.signal?.aborted) {
+        throw new OAuthSessionError("oauth_cancelled", "Browser authorization was cancelled.");
+      }
+      const { platform, origin, tokenPath, fetchFn, now } = resolveSessionParams(options);
+      const metadata = await discoverAuthMetadata(origin, fetchFn, options.signal);
+      if (options.signal?.aborted) {
+        throw new OAuthSessionError("oauth_cancelled", "Browser authorization was cancelled.");
+      }
+
+      const verifier = randomBytes(32).toString("base64url");
+      const challenge = createHash("sha256").update(verifier, "ascii").digest("base64url");
+      const expectedState = randomBytes(32).toString("base64url");
+      const resource = `${origin}${MERCHANT_MCP_RESOURCE_PATH}`;
+
+      let settle!: { resolve: (code: string) => void; reject: (error: Error) => void };
+      const callbackPromise = new Promise<string>((resolve, reject) => {
+        settle = { resolve, reject };
+      });
+      callbackPromise.catch(() => {});
+
+      const server = createServer((req, res) => {
+        let url: URL;
+        try {
+          url = new URL(req.url ?? "/", "http://127.0.0.1");
+        } catch {
+          res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+          res.end("Bad request");
+          return;
+        }
+        if (req.method !== "GET" || url.pathname !== "/callback") {
+          res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+          res.end("Not found");
+          return;
+        }
+
+        const reply = (status: number, title: string, message: string) => {
+          res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+          res.end(callbackHtml(title, message));
+        };
+
+        const gotState = url.searchParams.get("state");
+        if (!gotState || !safeTimingEqual(gotState, expectedState)) {
+          reply(400, "Paymos sign-in failed", "Authorization state validation failed.");
+          settle.reject(new OAuthSessionError("oauth_state_mismatch", "Callback state did not match."));
+          return;
+        }
+
+        const gotIss = url.searchParams.get("iss");
+        if (!gotIss || gotIss !== metadata.issuer) {
+          reply(400, "Paymos sign-in failed", "Authorization issuer validation failed.");
+          settle.reject(new OAuthSessionError("oauth_issuer_mismatch", "Callback iss did not match expected issuer."));
+          return;
+        }
+
+        if (url.searchParams.has("error")) {
+          reply(400, "Paymos sign-in cancelled", "Authorization was not approved.");
+          settle.reject(new OAuthSessionError("oauth_denied", "Authorization was denied or failed."));
+          return;
+        }
+
+        const code = url.searchParams.get("code");
+        if (!code) {
+          reply(400, "Paymos sign-in failed", "Authorization code was missing.");
+          settle.reject(new OAuthSessionError("oauth_failed", "Authorization code was missing."));
+          return;
+        }
+
+        reply(200, "Paymos connected", "Sign-in is complete. You can close this window.");
+        settle.resolve(code);
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+          server.removeListener("error", reject);
+          resolve();
+        });
+      });
+
+      const timeoutMs = options.loginTimeoutMs ?? DEFAULT_LOGIN_TIMEOUT_MS;
+      const timer = setTimeout(() => {
+        settle.reject(new OAuthSessionError("oauth_timeout", "Timed out waiting for browser authorization callback."));
+      }, timeoutMs);
+      const onAbort = () => {
+        settle.reject(new OAuthSessionError("oauth_cancelled", "Browser authorization was cancelled."));
+      };
+      if (options.signal) {
+        if (options.signal.aborted) onAbort();
+        else options.signal.addEventListener("abort", onAbort, { once: true });
+      }
+
+      let redirectUri = "";
+      let code: string;
+      try {
+        if (options.signal?.aborted) {
+          throw new OAuthSessionError("oauth_cancelled", "Browser authorization was cancelled.");
+        }
+        const address = server.address() as AddressInfo;
+        redirectUri = `http://127.0.0.1:${address.port}/callback`;
+        const authUrl = new URL(metadata.authorizationEndpoint);
+        authUrl.searchParams.set("client_id", MERCHANT_MCP_LOOPBACK_CLIENT_ID);
+        authUrl.searchParams.set("redirect_uri", redirectUri);
+        authUrl.searchParams.set("response_type", "code");
+        authUrl.searchParams.set("scope", MERCHANT_MCP_SCOPE);
+        authUrl.searchParams.set("resource", resource);
+        authUrl.searchParams.set("state", expectedState);
+        authUrl.searchParams.set("code_challenge_method", "S256");
+        authUrl.searchParams.set("code_challenge", challenge);
+
+        const authUrlString = authUrl.toString();
+        options.onAuthUrl?.(authUrlString);
+        await openUrlInBrowser(authUrlString, origin, options.openBrowser);
+        if (options.signal?.aborted) {
+          throw new OAuthSessionError("oauth_cancelled", "Browser authorization was cancelled.");
+        }
+        resolveAuthUrl(authUrlString);
+        code = await callbackPromise;
+      } finally {
+        clearTimeout(timer);
+        options.signal?.removeEventListener("abort", onAbort);
+        server.closeAllConnections?.();
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+
+      const body = new URLSearchParams({
+        grant_type: "authorization_code",
+        client_id: MERCHANT_MCP_LOOPBACK_CLIENT_ID,
+        redirect_uri: redirectUri,
+        code,
+        code_verifier: verifier,
+        resource,
+      });
+
+      let tokenResponse: Response;
+      try {
+        tokenResponse = await fetchFn(metadata.tokenEndpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json",
+          },
+          body: body.toString(),
+          credentials: "omit",
+          redirect: "error",
+          signal: combineSignal(options.signal, 30_000),
+        });
+      } catch {
+        throw new OAuthSessionError("oauth_failed", "Failed to exchange authorization code for tokens.");
+      }
+
+      if (!tokenResponse.ok) {
+        void tokenResponse.body?.cancel().catch(() => {});
+        throw new OAuthSessionError("oauth_failed", `Token exchange failed with HTTP ${tokenResponse.status}.`);
+      }
+
+      let parsedBody: unknown;
+      try {
+        parsedBody = await tokenResponse.json();
+      } catch {
+        throw new OAuthSessionError("oauth_failed", "Token exchange returned invalid JSON.");
+      }
+      const nextSession = parseTokenResponse(parsedBody, metadata.issuer, now);
+
+      await withAsyncFileLock(tokenPath, () => {
+        const store = readTokenStore(tokenPath, platform);
+        store.origins[origin] = nextSession;
+        saveTokenStore(tokenPath, store, platform);
+      }, { platform, ...options.lockOptions });
+
+      options.onSession?.(nextSession);
+      return nextSession;
+    } catch (error) {
+      rejectAuthUrl(error);
+      throw error;
     }
+  })();
 
-    const gotIss = url.searchParams.get("iss");
-    if (!gotIss || gotIss !== metadata.issuer) {
-      reply(400, "Paymos sign-in failed", "Authorization issuer validation failed.");
-      settle.reject(new OAuthSessionError("oauth_issuer_mismatch", "Callback iss did not match expected issuer."));
-      return;
-    }
+  session.catch(() => {});
+  return { authorizeUrl, session };
+}
 
-    if (url.searchParams.has("error")) {
-      reply(400, "Paymos sign-in cancelled", "Authorization was not approved.");
-      settle.reject(new OAuthSessionError("oauth_denied", "Authorization was denied or failed."));
-      return;
-    }
-
-    const code = url.searchParams.get("code");
-    if (!code) {
-      reply(400, "Paymos sign-in failed", "Authorization code was missing.");
-      settle.reject(new OAuthSessionError("oauth_failed", "Authorization code was missing."));
-      return;
-    }
-
-    reply(200, "Paymos connected", "Sign-in is complete. You can close this window.");
-    settle.resolve(code);
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      server.removeListener("error", reject);
-      resolve();
-    });
-  });
-
-  const timeoutMs = options.loginTimeoutMs ?? DEFAULT_LOGIN_TIMEOUT_MS;
-  const timer = setTimeout(() => {
-    settle.reject(new OAuthSessionError("oauth_timeout", "Timed out waiting for browser authorization callback."));
-  }, timeoutMs);
-  const onAbort = () => {
-    settle.reject(new OAuthSessionError("oauth_cancelled", "Browser authorization was cancelled."));
-  };
-  if (options.signal) {
-    if (options.signal.aborted) onAbort();
-    else options.signal.addEventListener("abort", onAbort, { once: true });
-  }
-
-  let redirectUri = "";
-  let code: string;
-  try {
-    const address = server.address() as AddressInfo;
-    redirectUri = `http://127.0.0.1:${address.port}/callback`;
-    const authUrl = new URL(metadata.authorizationEndpoint);
-    authUrl.searchParams.set("client_id", MERCHANT_MCP_LOOPBACK_CLIENT_ID);
-    authUrl.searchParams.set("redirect_uri", redirectUri);
-    authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("scope", MERCHANT_MCP_SCOPE);
-    authUrl.searchParams.set("resource", resource);
-    authUrl.searchParams.set("state", expectedState);
-    authUrl.searchParams.set("code_challenge_method", "S256");
-    authUrl.searchParams.set("code_challenge", challenge);
-
-    options.onAuthUrl?.(authUrl.toString());
-    const opener = options.openBrowser ?? defaultOpenBrowser;
-    await opener(authUrl.toString());
-    code = await callbackPromise;
-  } finally {
-    clearTimeout(timer);
-    options.signal?.removeEventListener("abort", onAbort);
-    server.closeAllConnections?.();
-    await new Promise<void>(resolve => server.close(() => resolve()));
-  }
-
-  const body = new URLSearchParams({
-    grant_type: "authorization_code",
-    client_id: MERCHANT_MCP_LOOPBACK_CLIENT_ID,
-    redirect_uri: redirectUri,
-    code,
-    code_verifier: verifier,
-    resource,
-  });
-
-  let tokenResponse: Response;
-  try {
-    tokenResponse = await fetchFn(metadata.tokenEndpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
-      body: body.toString(),
-      credentials: "omit",
-      redirect: "error",
-      signal: combineSignal(options.signal, 30_000),
-    });
-  } catch {
-    throw new OAuthSessionError("oauth_failed", "Failed to exchange authorization code for tokens.");
-  }
-
-  if (!tokenResponse.ok) {
-    void tokenResponse.body?.cancel().catch(() => {});
-    throw new OAuthSessionError("oauth_failed", `Token exchange failed with HTTP ${tokenResponse.status}.`);
-  }
-
-  let parsedBody: unknown;
-  try {
-    parsedBody = await tokenResponse.json();
-  } catch {
-    throw new OAuthSessionError("oauth_failed", "Token exchange returned invalid JSON.");
-  }
-  const session = parseTokenResponse(parsedBody, metadata.issuer, now);
-
-  await withAsyncFileLock(tokenPath, () => {
-    const store = readTokenStore(tokenPath, platform);
-    store.origins[origin] = session;
-    saveTokenStore(tokenPath, store, platform);
-  }, { platform, ...options.lockOptions });
-
-  options.onSession?.(session);
-  return session;
+export async function loginWithBrowser(options: OAuthSessionOptions = {}): Promise<StoredOriginSession> {
+  return startBrowserLoginFlow(options).session;
 }
 
 async function refreshAccessTokenSingleFlight(
@@ -696,5 +837,70 @@ export async function requireAccessToken(options: RequireAccessTokenOptions = {}
     return session.access_token;
   } finally {
     if (loginLocks.get(key) === task) loginLocks.delete(key);
+  }
+}
+
+/**
+ * Returns an active/refreshed access token when available, or starts/reuses a
+ * single-flight background browser PKCE flow and waits up to `loginFastPathMs`
+ * before returning `{ status: "login_required", authorizeUrl }`.
+ */
+export async function acquireConnectAccessToken(
+  options: RequireAccessTokenOptions & { readonly loginFastPathMs?: number } = {},
+): Promise<ConnectAccessTokenResult> {
+  if (options.signal?.aborted) {
+    throw new OAuthSessionError("oauth_cancelled", "Browser authorization was cancelled.");
+  }
+  const existingToken = await silentReadOrRefreshForRequire(options);
+  if (existingToken !== undefined) {
+    return { status: "ready", accessToken: existingToken };
+  }
+
+  const { platform, origin, tokenPath } = resolveSessionParams(options);
+  const key = lockKey(tokenPath, origin, platform);
+
+  let pending = pendingBrowserLogins.get(key);
+  if (!pending || pending.signal?.aborted) {
+    const flow = startBrowserLoginFlow(options);
+    const entry: PendingBrowserLogin = {
+      ...flow,
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    };
+    pending = entry;
+    pendingBrowserLogins.set(key, entry);
+    void flow.session.then(
+      () => {
+        if (pendingBrowserLogins.get(key) === entry) {
+          pendingBrowserLogins.delete(key);
+        }
+      },
+      () => {
+        if (pendingBrowserLogins.get(key) === entry) {
+          pendingBrowserLogins.delete(key);
+        }
+      },
+    );
+  }
+
+  const authorizeUrl = await pending.authorizeUrl;
+  const fastPathMs = options.loginFastPathMs ?? DEFAULT_LOGIN_FAST_PATH_MS;
+  if (fastPathMs <= 0) {
+    return { status: "login_required", authorizeUrl };
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const outcome = await Promise.race([
+      pending.session.then(session => ({ kind: "ready" as const, accessToken: session.access_token })),
+      new Promise<{ readonly kind: "timeout" }>(resolve => {
+        timer = setTimeout(() => resolve({ kind: "timeout" }), fastPathMs);
+      }),
+    ]);
+    if (outcome.kind === "ready") {
+      return { status: "ready", accessToken: outcome.accessToken };
+    }
+    return { status: "login_required", authorizeUrl };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }

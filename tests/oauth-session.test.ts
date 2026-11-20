@@ -8,8 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  defaultTokenPath, loginWithBrowser, readTokenStore, requireAccessToken, saveTokenStore,
-  tryGetAccessToken, validateOrigin, type TokenStore,
+  acquireConnectAccessToken, defaultTokenPath, loginWithBrowser, openUrlInBrowser, readTokenStore,
+  requireAccessToken, resolveSafeContinuationUrl, saveTokenStore, tryGetAccessToken, validateOrigin,
+  type TokenStore,
 } from "../src/oauth-session.js";
 import { writePrivateFile, withAsyncFileLock } from "../src/private-state.js";
 
@@ -444,5 +445,253 @@ describe("oauth-session", process.platform === "win32" ? { timeout: 25_000 } : {
     ));
     expect(browserCalls).toBe(1);
     expect(results).toEqual(["at_single_login", "at_single_login", "at_single_login"]);
+  });
+
+  it("validates continuation URLs strictly as same-origin ctk_ tickets without query, hash, or userinfo", () => {
+    const validTicket43 = "ctk_" + "a".repeat(43);
+    const validTicket86 = "ctk_" + "A0_-".repeat(21) + "xy";
+    expect(resolveSafeContinuationUrl(`/connect/merchant-mcp/continue/${validTicket43}`, "https://app.paymos.io"))
+      .toBe(`https://app.paymos.io/connect/merchant-mcp/continue/${validTicket43}`);
+    expect(
+      resolveSafeContinuationUrl(
+        `https://dev-local.paymos.io/connect/merchant-mcp/continue/${validTicket86}`,
+        "https://dev-local.paymos.io/",
+      ),
+    ).toBe(`https://dev-local.paymos.io/connect/merchant-mcp/continue/${validTicket86}`);
+    expect(
+      resolveSafeContinuationUrl(
+        `https://app.paymos.io:443/connect/merchant-mcp/continue/${validTicket43}`,
+        "https://app.paymos.io",
+      ),
+    ).toBe(`https://app.paymos.io/connect/merchant-mcp/continue/${validTicket43}`);
+    expect(
+      resolveSafeContinuationUrl(`/connect/merchant-mcp/continue/${validTicket43}`, "http://127.0.0.1:5000"),
+    ).toBe(`http://127.0.0.1:5000/connect/merchant-mcp/continue/${validTicket43}`);
+
+    for (const bad of [
+      undefined,
+      null,
+      42,
+      {},
+      "",
+      "   ",
+      ` /connect/merchant-mcp/continue/${validTicket43}`,
+      `/connect/merchant-mcp/continue/${validTicket43}\n`,
+      `\\connect\\merchant-mcp\\continue\\${validTicket43}`,
+      `https://evil.test/connect/merchant-mcp/continue/${validTicket43}`,
+      `//evil.test/connect/merchant-mcp/continue/${validTicket43}`,
+      `http://app.paymos.io/connect/merchant-mcp/continue/${validTicket43}`,
+      "javascript:alert(1)",
+      "data:text/html,<script>alert(1)</script>",
+      "file:///etc/passwd",
+      `https://user:pass@app.paymos.io/connect/merchant-mcp/continue/${validTicket43}`,
+      `https://@app.paymos.io/connect/merchant-mcp/continue/${validTicket43}`,
+      `/connect/merchant-mcp/continue/${validTicket43}?x=1`,
+      `/connect/merchant-mcp/continue/${validTicket43}#frag`,
+      `/connect/merchant-mcp/continue/${validTicket43}?`,
+      `/connect/merchant-mcp/continue/${validTicket43}#`,
+      "/accounts/1",
+      "/connect/merchant-mcp/continue/not_a_ticket_" + "a".repeat(40),
+      "/connect/merchant-mcp/continue/ctk_" + "a".repeat(42),
+      "/connect/merchant-mcp/continue/ctk_" + "a".repeat(87),
+    ]) {
+      expect(resolveSafeContinuationUrl(bad, "https://app.paymos.io"), `expected ${String(bad)} to be rejected`)
+        .toBeUndefined();
+    }
+  });
+
+  it("enforces expectedOrigin in openUrlInBrowser and suppresses headless opener failures", async () => {
+    const ticketUrl = `https://app.paymos.io/connect/merchant-mcp/continue/ctk_${"b".repeat(43)}`;
+    const opener = vi.fn();
+    await openUrlInBrowser(ticketUrl, "https://app.paymos.io/", opener);
+    expect(opener).toHaveBeenCalledExactlyOnceWith(ticketUrl);
+
+    const canonicalOpener = vi.fn();
+    await openUrlInBrowser(
+      `https://app.paymos.io:443/connect/merchant-mcp/continue/ctk_${"b".repeat(43)}`,
+      "https://app.paymos.io",
+      canonicalOpener,
+    );
+    expect(canonicalOpener).toHaveBeenCalledExactlyOnceWith(ticketUrl);
+
+    const refusedOpener = vi.fn();
+    for (const badUrl of [
+      "",
+      "   ",
+      "file:///etc/passwd",
+      `https://evil.test/connect/merchant-mcp/continue/ctk_${"b".repeat(43)}`,
+      "javascript:alert(1)",
+      `https://user@app.paymos.io/connect/merchant-mcp/continue/ctk_${"b".repeat(43)}`,
+      `https://@app.paymos.io/connect/merchant-mcp/continue/ctk_${"b".repeat(43)}`,
+      "https://app.paymos.io\\@evil.test/x",
+      `https://app.paymos.io/connect/merchant-mcp/continue/ctk_${"b".repeat(43)}\r\n`,
+      ` https://app.paymos.io/connect/merchant-mcp/continue/ctk_${"b".repeat(43)}`,
+      "not a url",
+    ]) {
+      await expect(openUrlInBrowser(badUrl, "https://app.paymos.io", refusedOpener), `expected ${badUrl} to throw`)
+        .rejects.toThrow(/^invalid_origin:/);
+    }
+    expect(refusedOpener).not.toHaveBeenCalled();
+
+    await expect(openUrlInBrowser(ticketUrl, "https://app.paymos.io", () => {
+      throw new Error("spawn xdg-open ENOENT");
+    })).resolves.toBeUndefined();
+    await expect(openUrlInBrowser(ticketUrl, "https://app.paymos.io", async () => {
+      throw new Error("async headless error");
+    })).resolves.toBeUndefined();
+  });
+
+  it("supports acquireConnectAccessToken fast-path hit, deferred background callback, single-flight, failure cleanup, and abort cleanup", async () => {
+    const origin = "https://dev-local.paymos.io";
+    const issuer = `${origin}/`;
+
+    // 1. Fast-path hit when callback arrives before loginFastPathMs expires.
+    const rootFast = makeTempRoot();
+    const tokenFast = join(rootFast, "mcp", "merchant-oauth.json");
+    const fetchFast = mockMetadataFetch(origin, issuer, () =>
+      Response.json({ access_token: "at_fast_1", refresh_token: "rt_fast_1", expires_in: 300 }),
+    );
+    const fastResult = await acquireConnectAccessToken({
+      origin,
+      tokenFile: tokenFast,
+      fetch: fetchFast,
+      loginFastPathMs: 500,
+      openBrowser: async rawUrl => {
+        const authUrl = new URL(rawUrl);
+        const redirect = new URL(authUrl.searchParams.get("redirect_uri")!);
+        redirect.searchParams.set("code", "code_fast");
+        redirect.searchParams.set("state", authUrl.searchParams.get("state")!);
+        redirect.searchParams.set("iss", issuer);
+        await fetch(redirect);
+      },
+    });
+    expect(fastResult).toEqual({ status: "ready", accessToken: "at_fast_1" });
+
+    // 2. Deferred background callback + single-flight across concurrent callers + loginFastPathMs <= 0 immediate return.
+    const rootDeferred = makeTempRoot();
+    const tokenDeferred = join(rootDeferred, "mcp", "merchant-oauth.json");
+    const fetchDeferred = mockMetadataFetch(origin, issuer, () =>
+      Response.json({ access_token: "at_deferred_2", refresh_token: "rt_deferred_2", expires_in: 300 }),
+    );
+    const openedUrls: string[] = [];
+    const deferredController = new AbortController();
+
+    const [r1, r2] = await Promise.all([
+      acquireConnectAccessToken({
+        origin,
+        tokenFile: tokenDeferred,
+        fetch: fetchDeferred,
+        signal: deferredController.signal,
+        loginFastPathMs: 25,
+        openBrowser: rawUrl => { openedUrls.push(rawUrl); },
+      }),
+      acquireConnectAccessToken({
+        origin,
+        tokenFile: tokenDeferred,
+        fetch: fetchDeferred,
+        signal: deferredController.signal,
+        loginFastPathMs: 0,
+        openBrowser: rawUrl => { openedUrls.push(rawUrl); },
+      }),
+    ]);
+
+    expect(openedUrls).toHaveLength(1);
+    expect(r1).toEqual({ status: "login_required", authorizeUrl: openedUrls[0]! });
+    expect(r2).toEqual({ status: "login_required", authorizeUrl: openedUrls[0]! });
+
+    // Simulate user completing sign-in in a second browser on the loopback callback.
+    const authUrl = new URL(openedUrls[0]!);
+    const redirect = new URL(authUrl.searchParams.get("redirect_uri")!);
+    redirect.searchParams.set("code", "code_second_browser");
+    redirect.searchParams.set("state", authUrl.searchParams.get("state")!);
+    redirect.searchParams.set("iss", issuer);
+    const cbResp = await fetch(redirect);
+    expect(cbResp.status).toBe(200);
+
+    // Wait briefly for background token exchange & store write to complete.
+    let nextResult = await acquireConnectAccessToken({
+      origin,
+      tokenFile: tokenDeferred,
+      fetch: fetchDeferred,
+      loginFastPathMs: 250,
+      openBrowser: rawUrl => { openedUrls.push(rawUrl); },
+    });
+    expect(nextResult).toEqual({ status: "ready", accessToken: "at_deferred_2" });
+    expect(openedUrls).toHaveLength(1);
+
+    // 3. Background denial clears pending slot without unhandledRejection, allowing a clean retry.
+    const rootFail = makeTempRoot();
+    const tokenFail = join(rootFail, "mcp", "merchant-oauth.json");
+    const failOpens: string[] = [];
+    const failFirst = await acquireConnectAccessToken({
+      origin,
+      tokenFile: tokenFail,
+      fetch: fetchDeferred,
+      loginFastPathMs: 15,
+      openBrowser: rawUrl => { failOpens.push(rawUrl); },
+    });
+    expect(failFirst.status).toBe("login_required");
+    const failAuth = new URL(failOpens[0]!);
+    const failRedirect = new URL(failAuth.searchParams.get("redirect_uri")!);
+    failRedirect.searchParams.set("state", failAuth.searchParams.get("state")!);
+    failRedirect.searchParams.set("iss", issuer);
+    failRedirect.searchParams.set("error", "access_denied");
+    expect((await fetch(failRedirect)).status).toBe(400);
+    await new Promise(resolve => setTimeout(resolve, 25));
+
+    const retryAfterFail = await acquireConnectAccessToken({
+      origin,
+      tokenFile: tokenFail,
+      fetch: fetchDeferred,
+      loginFastPathMs: 500,
+      openBrowser: async rawUrl => {
+        failOpens.push(rawUrl);
+        const u = new URL(rawUrl);
+        const rd = new URL(u.searchParams.get("redirect_uri")!);
+        rd.searchParams.set("code", "code_after_fail");
+        rd.searchParams.set("state", u.searchParams.get("state")!);
+        rd.searchParams.set("iss", issuer);
+        await fetch(rd);
+      },
+    });
+    expect(failOpens).toHaveLength(2);
+    expect(retryAfterFail).toEqual({ status: "ready", accessToken: "at_deferred_2" });
+
+    // 4. Aborting signal closes background loopback server and frees pending slot.
+    const rootAbort = makeTempRoot();
+    const tokenAbort = join(rootAbort, "mcp", "merchant-oauth.json");
+    const abortCtrl = new AbortController();
+    const abortOpens: string[] = [];
+    const pendingRes = await acquireConnectAccessToken({
+      origin,
+      tokenFile: tokenAbort,
+      fetch: fetchDeferred,
+      signal: abortCtrl.signal,
+      loginFastPathMs: 15,
+      openBrowser: rawUrl => { abortOpens.push(rawUrl); },
+    });
+    expect(pendingRes.status).toBe("login_required");
+    const abortRedirect = new URL(new URL(abortOpens[0]!).searchParams.get("redirect_uri")!);
+    abortCtrl.abort();
+    await new Promise(resolve => setTimeout(resolve, 25));
+    await expect(fetch(abortRedirect)).rejects.toThrow();
+
+    const postAbortRes = await acquireConnectAccessToken({
+      origin,
+      tokenFile: tokenAbort,
+      fetch: fetchDeferred,
+      loginFastPathMs: 500,
+      openBrowser: async rawUrl => {
+        abortOpens.push(rawUrl);
+        const u = new URL(rawUrl);
+        const rd = new URL(u.searchParams.get("redirect_uri")!);
+        rd.searchParams.set("code", "code_post_abort");
+        rd.searchParams.set("state", u.searchParams.get("state")!);
+        rd.searchParams.set("iss", issuer);
+        await fetch(rd);
+      },
+    });
+    expect(abortOpens).toHaveLength(2);
+    expect(postAbortRes).toEqual({ status: "ready", accessToken: "at_deferred_2" });
   });
 });

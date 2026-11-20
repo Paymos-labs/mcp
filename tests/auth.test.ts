@@ -196,16 +196,24 @@ describe("paymos unified auth", process.platform === "win32" ? { timeout: 25_000
     const f = fixture("win32");
     const origin = "https://dev-local.paymos.io";
     const oauth = mockOAuthHooks(origin);
+    const seenAuthUrls: string[] = [];
 
     await expect(runAuth(
       ["--client", "codex", "--origin", origin, "--token-file", f.tokenFile],
       f.env,
       f.io,
       f.context,
-      oauth.hooks,
+      { ...oauth.hooks, onAuthUrl: url => seenAuthUrls.push(url) },
     )).resolves.toBe(0);
 
     expect(oauth.getLoginCount()).toBe(1);
+    expect(seenAuthUrls).toHaveLength(1);
+    expect(seenAuthUrls[0]).toMatch(/^https:\/\/dev-local\.paymos\.io\/connect\/authorize\?/);
+    const openIdx = f.logs.indexOf(AUTH_COPY.openingBrowser(seenAuthUrls[0]!));
+    const signedInIdx = f.logs.indexOf(AUTH_COPY.signedIn(origin));
+    expect(openIdx).toBeGreaterThanOrEqual(0);
+    expect(signedInIdx).toBeGreaterThan(openIdx);
+    expect(f.logs.at(-1)).toBe(AUTH_COPY.restart);
     expect(readTokenStore(f.tokenFile).origins[origin]?.access_token).toBe("at_auth_browser_1");
     expect(parseToml(readFileSync(defaultConfigPath("codex", f.env, f.context), "utf8"))).toEqual({
       mcp_servers: {
