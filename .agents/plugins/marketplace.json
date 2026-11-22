@@ -1,0 +1,20 @@
+{
+  "name": "paymos",
+  "interface": {
+    "displayName": "Paymos"
+  },
+  "plugins": [
+    {
+      "name": "paymos",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

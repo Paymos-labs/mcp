@@ -1,0 +1,48 @@
+{
+  "name": "paymos",
+  "version": "1.10.0",
+  "description": "Official Paymos plugin for OpenAI Codex: remote Streamable HTTP Merchant MCP (OAuth 2.1) and 4 Paymos Agent Skills for integration, webhooks, Sandbox testing, and merchant workspace operations.",
+  "author": {
+    "name": "Paymos Labs",
+    "email": "support@paymos.io",
+    "url": "https://paymos.io"
+  },
+  "homepage": "https://paymos.io/docs/mcp",
+  "repository": "https://github.com/Paymos-labs/mcp",
+  "license": "MIT",
+  "keywords": [
+    "paymos",
+    "mcp",
+    "payments",
+    "stablecoins",
+    "usdt",
+    "usdc",
+    "xaut",
+    "webhooks",
+    "sandbox"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Paymos",
+    "shortDescription": "Stablecoin payments, Sandbox testing & Merchant MCP",
+    "longDescription": "Connect OpenAI Codex to Paymos Merchant MCP over remote Streamable HTTP with OAuth 2.1. Choose the right Paymos integration (12 CMS plugins, Low-Code widget, POS terminal, 8 server SDKs, invoices, payment channels), verify signed raw-body webhooks, simulate Sandbox lifecycles, and manage your merchant workspace.",
+    "developerName": "Paymos Labs",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://paymos.io",
+    "privacyPolicyURL": "https://paymos.io/privacy",
+    "termsOfServiceURL": "https://paymos.io/terms",
+    "composerIcon": "./assets/logo.svg",
+    "logo": "./assets/logo.svg",
+    "defaultPrompt": [
+      "Recommend the best Paymos payment integration for my store or backend stack",
+      "Add raw-body X-Webhook-Signature verification and event_id deduplication for Paymos webhooks",
+      "Create a Paymos Sandbox invoice and simulate paid, overpaid, underpay, and paid_late outcomes"
+    ]
+  }
+}

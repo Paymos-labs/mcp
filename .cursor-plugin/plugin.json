@@ -1,0 +1,14 @@
+{
+  "name": "paymos",
+  "version": "1.10.0",
+  "description": "Official Paymos plugin for Cursor: remote Streamable HTTP Merchant MCP (OAuth 2.1), Paymos guardrails (.mdc), and 4 Paymos Agent Skills.",
+  "author": {
+    "name": "Paymos Labs"
+  },
+  "homepage": "https://paymos.io/docs/mcp",
+  "repository": "https://github.com/Paymos-labs/mcp",
+  "license": "MIT",
+  "skills": "./skills/",
+  "rules": "./rules/",
+  "mcpServers": "./mcp.json"
+}

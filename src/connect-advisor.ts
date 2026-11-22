@@ -132,6 +132,7 @@ const CMS_CATALOG: readonly CmsCatalogEntry[] = [
     id: "givewp",
     name: "GiveWP",
     doc_uri: "paymos://docs/cms-givewp",
+    repository: "Paymos-labs/givewp",
     aliases: ["givewp", "cmsgivewp"],
   },
   {

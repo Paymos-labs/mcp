@@ -1,0 +1,18 @@
+{
+  "name": "paymos",
+  "displayName": "Paymos",
+  "description": "Integrate Paymos stablecoin & XAUT payments, verify signed webhooks, test end-to-end in Sandbox, and manage your merchant workspace over remote Merchant MCP.",
+  "version": "1.10.0",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Recommend the best Paymos payment integration for my store or backend stack",
+    "Add raw-body X-Webhook-Signature verification and event_id deduplication for Paymos webhooks",
+    "Create a Paymos Sandbox invoice and simulate paid, overpaid, underpay, and paid_late outcomes"
+  ],
+  "author": {
+    "name": "Paymos Labs",
+    "url": "https://paymos.io"
+  },
+  "homepage": "https://paymos.io/docs/mcp",
+  "repository": "https://github.com/Paymos-labs/mcp"
+}

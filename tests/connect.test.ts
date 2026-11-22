@@ -649,20 +649,20 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
       openBrowser,
     });
 
-    const cmsCases: Array<[string, string]> = [
-      ["woocommerce", "paymos://docs/cms-woocommerce"],
-      ["whmcs", "paymos://docs/cms-whmcs"],
-      ["prestashop", "paymos://docs/cms-prestashop"],
-      ["magento2", "paymos://docs/cms-magento2"],
-      ["opencart", "paymos://docs/cms-opencart"],
-      ["shopware6", "paymos://docs/cms-shopware6"],
-      ["cscart", "paymos://docs/cms-cscart"],
-      ["easy-digital-downloads", "paymos://docs/cms-easy-digital-downloads"],
-      ["edd", "paymos://docs/cms-easy-digital-downloads"],
-      ["drupal-commerce", "paymos://docs/cms-drupal-commerce"],
-      ["hikashop", "paymos://docs/cms-hikashop"],
-      ["givewp", "paymos://docs/cms-givewp"],
-      ["odoo", "paymos://docs/cms-odoo"],
+    const cmsCases: Array<[string, string, string]> = [
+      ["woocommerce", "paymos://docs/cms-woocommerce", "Paymos-labs/woocommerce"],
+      ["whmcs", "paymos://docs/cms-whmcs", "Paymos-labs/whmcs"],
+      ["prestashop", "paymos://docs/cms-prestashop", "Paymos-labs/prestashop"],
+      ["magento2", "paymos://docs/cms-magento2", "Paymos-labs/magento2"],
+      ["opencart", "paymos://docs/cms-opencart", "Paymos-labs/opencart"],
+      ["shopware6", "paymos://docs/cms-shopware6", "Paymos-labs/shopware6"],
+      ["cscart", "paymos://docs/cms-cscart", "Paymos-labs/cscart"],
+      ["easy-digital-downloads", "paymos://docs/cms-easy-digital-downloads", "Paymos-labs/edd"],
+      ["edd", "paymos://docs/cms-easy-digital-downloads", "Paymos-labs/edd"],
+      ["drupal-commerce", "paymos://docs/cms-drupal-commerce", "Paymos-labs/drupal-commerce"],
+      ["hikashop", "paymos://docs/cms-hikashop", "Paymos-labs/hikashop"],
+      ["givewp", "paymos://docs/cms-givewp", "Paymos-labs/givewp"],
+      ["odoo", "paymos://docs/cms-odoo", "Paymos-labs/odoo"],
     ];
 
     const calls: Array<{ id: string; arguments: Record<string, unknown> }> = [
@@ -737,14 +737,15 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
     // Unknown scenario -> isError: true
     expect(byId.get("s_invalid")!.isError).toBe(true);
 
-    // All 12 CMS auto-detections
-    for (const [idx, [, expectedDoc]] of cmsCases.entries()) {
+    // All 12 CMS auto-detections (including repository metadata parity)
+    for (const [idx, [, expectedDoc, expectedRepo]] of cmsCases.entries()) {
       const body = JSON.parse(byId.get(`cms_${idx}`)!.content[0]!.text) as {
         scenario: string;
-        detected_cms?: { doc_uri: string };
+        detected_cms?: { doc_uri: string; repository?: string };
       };
       expect(body.scenario).toBe("cms_plugin");
       expect(body.detected_cms?.doc_uri).toBe(expectedDoc);
+      expect(body.detected_cms?.repository).toBe(expectedRepo);
     }
 
     expect(fetchMock).not.toHaveBeenCalled();

@@ -1,8 +1,33 @@
 # @paymos/mcp
 
-Official Paymos MCP server: connect your AI IDE or CLI to offline Paymos integration docs and advisor tools immediately, plus optional OAuth sign-in to your Paymos merchant account (`191` tools total in `connect`) or key-based Local Sandbox (`--sandbox`).
+Official Paymos MCP server and multi-AI plugin wrapper: install Paymos natively into Claude Code, OpenAI Codex, Antigravity, Gemini CLI, GitHub Copilot CLI, Cursor, or any Agent Skills client from `Paymos-labs/mcp` over remote Streamable HTTP OAuth 2.1 (`188` merchant workspace and Sandbox tools, no local Node.js required) — or run the local `@paymos/mcp` CLI/stdio bridge for offline docs, integration advisor, `.env`/file helpers (`191` tools total in `connect`), or key-based Local Sandbox (`--sandbox`).
 
-## Quick setup (recommended)
+## Install as an AI plugin (recommended — no Node.js required)
+
+Native plugins connect directly to `https://app.paymos.io/connect/merchant-mcp` with automatic OAuth 2.1 PKCE + Dynamic Client Registration (`188` workspace & Sandbox tools) and bundle 4 cross-platform Paymos Agent Skills plus guardrails:
+
+| Client | Install command | Notes |
+|---|---|---|
+| **Claude Code** | `claude plugin marketplace add Paymos-labs/mcp && claude plugin install paymos@paymos` | In interactive sessions, `/plugin marketplace add Paymos-labs/mcp` and `/plugin install paymos@paymos` also work. |
+| **OpenAI Codex** | `codex plugin marketplace add Paymos-labs/mcp` | Registers the marketplace from GitHub; then select **Paymos** in `/plugins`. |
+| **Antigravity** | `agy plugin install https://github.com/Paymos-labs/mcp.git` | Automatically picks up `plugin.json`, `mcp_config.json`, `rules/AGENTS.md`, and `skills/`. |
+| **Gemini CLI** | `gemini extensions install https://github.com/Paymos-labs/mcp` | Uses `gemini-extension.json` (`httpUrl` + `oauth.enabled`) and `rules/AGENTS.md`. |
+| **GitHub Copilot CLI** | `copilot plugin marketplace add Paymos-labs/mcp && copilot plugin install paymos@paymos` | Registers `.github/plugin/marketplace.json` and installs `paymos@paymos`. |
+| **Agent Skills (30+ AI tools)** | `npx skills add Paymos-labs/mcp` | Installs all 4 Paymos skills into Cursor, Windsurf, OpenCode, Cline, Roo Code, Zed, and other Agent Skills clients; pair with `npx -y @paymos/mcp setup` for MCP tools. |
+| **Cursor** | `.cursor-plugin/plugin.json` + `mcp.json` + `rules/paymos.mdc` + `skills/`, or `npx -y @paymos/mcp setup --client cursor` + `npx skills add Paymos-labs/mcp` | Native Cursor plugin manifests live at the repository root alongside CLI setup and Agent Skills support. |
+
+### Included Paymos Agent Skills (`skills/`)
+
+| Skill | What it covers |
+|---|---|
+| `paymos-integrate` | Choosing and implementing Paymos integrations (12 official CMS plugins, Low-Code JS widget `/v1/paymos-widget.js` with explicit `PaymosWidget.mount()`, browser POS terminal, Hosted Checkout, Host-to-Host `confirm-payment`, Telegram Bot checkout, Payment Channels, 8 server SDKs), exact asset/network rules (4 stablecoins `USDT`/`USDC`/`USD1`/`DAI` + gold-backed `XAUT`, 13 deposit / 11 withdrawal networks, 45 fiat currencies), and zero-secret `.env` writes via `install-secret`. |
+| `paymos-webhooks` | Raw-body `X-Webhook-Signature` HMAC-SHA256 verification (dual `v1=` 24-hour rotation windows, `300` s tolerance), `event_id` deduplication (never `X-Webhook-Id`), all 18 events (9 invoice including note-only `invoice.paid_late`, 3 payment channel, 6 withdrawal), reverse verification via `GET /v1/invoices/{id}`, and `confirmed` + `is_final: true` finality. |
+| `paymos-sandbox` | End-to-end Sandbox simulation over MCP (`paid`, `overpaid`, `underpay`, `cancel`, `paid_late`; `confirming`, `reorged`, `confirmed` channel deposits; refunds and withdrawals) with strict Sandbox/Production isolation. |
+| `paymos-workspace` | Operating a Paymos merchant workspace over Merchant MCP: role baselines (`Owner`/`Admin`/`Finance`/`Developer`/`Custom`), mandatory verbatim `continue_url` handoff and `operation_id` retry on `user_action_required`, `otk_*`/`ftk_*` local helpers, and dashboard-only withdrawal whitelist rules. |
+
+> Need offline `paymos://docs/*` pages (`27` compiled docs), offline advisor/webhook tools before login, local `.env`/file helpers (`install-secret`, `download-file`, `upload-file`), or key-based Local Sandbox (`--sandbox`)? Use the `@paymos/mcp` CLI setup below (requires Node.js 22.12+).
+
+## Quick setup (CLI bridge & offline docs)
 
 Configure any supported AI IDE or CLI with one command and no API keys:
 

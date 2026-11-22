@@ -1,0 +1,25 @@
+{
+  "name": "paymos",
+  "version": "1.10.0",
+  "description": "Official Paymos plugin for Claude Code: remote Streamable HTTP Merchant MCP (OAuth 2.1) and 4 Paymos Agent Skills for integration, webhooks, Sandbox testing, and workspace operations.",
+  "author": {
+    "name": "Paymos Labs",
+    "email": "support@paymos.io"
+  },
+  "homepage": "https://paymos.io/docs/mcp",
+  "repository": "https://github.com/Paymos-labs/mcp",
+  "license": "MIT",
+  "keywords": [
+    "paymos",
+    "mcp",
+    "payments",
+    "stablecoins",
+    "usdt",
+    "usdc",
+    "xaut",
+    "webhooks",
+    "sandbox"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json"
+}

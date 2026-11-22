@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "paymos": {
+      "url": "https://app.paymos.io/connect/merchant-mcp"
+    }
+  }
+}

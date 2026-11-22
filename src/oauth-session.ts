@@ -513,55 +513,86 @@ export function startBrowserLoginFlow(options: OAuthSessionOptions = {}): Browse
       });
       callbackPromise.catch(() => {});
 
+      let settled = false;
       const server = createServer((req, res) => {
         let url: URL;
         try {
           url = new URL(req.url ?? "/", "http://127.0.0.1");
         } catch {
-          res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+          res.writeHead(400, {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Connection": "close",
+          });
           res.end("Bad request");
           return;
         }
         if (req.method !== "GET" || url.pathname !== "/callback") {
-          res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+          res.writeHead(404, {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-store",
+            "Connection": "close",
+          });
           res.end("Not found");
           return;
         }
 
-        const reply = (status: number, title: string, message: string) => {
-          res.writeHead(status, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-          res.end(callbackHtml(title, message));
-        };
+        const reply = (status: number, title: string, message: string): Promise<void> =>
+          new Promise<void>(resolve => {
+            let done = false;
+            const finish = () => {
+              if (done) return;
+              done = true;
+              clearTimeout(flushTimer);
+              resolve();
+            };
+            const flushTimer = setTimeout(finish, 250);
+            flushTimer.unref?.();
+            res.writeHead(status, {
+              "Content-Type": "text/html; charset=utf-8",
+              "Cache-Control": "no-store",
+              "Connection": "close",
+            });
+            res.end(callbackHtml(title, message), finish);
+          });
+
+        if (settled) {
+          void reply(400, "Paymos sign-in failed", "Authorization callback already completed.");
+          return;
+        }
 
         const gotState = url.searchParams.get("state");
         if (!gotState || !safeTimingEqual(gotState, expectedState)) {
-          reply(400, "Paymos sign-in failed", "Authorization state validation failed.");
-          settle.reject(new OAuthSessionError("oauth_state_mismatch", "Callback state did not match."));
+          void reply(400, "Paymos sign-in failed", "Authorization state validation failed.");
           return;
         }
 
         const gotIss = url.searchParams.get("iss");
         if (!gotIss || gotIss !== metadata.issuer) {
-          reply(400, "Paymos sign-in failed", "Authorization issuer validation failed.");
-          settle.reject(new OAuthSessionError("oauth_issuer_mismatch", "Callback iss did not match expected issuer."));
+          settled = true;
+          void reply(400, "Paymos sign-in failed", "Authorization issuer validation failed.")
+            .then(() => settle.reject(new OAuthSessionError("oauth_issuer_mismatch", "Callback iss did not match expected issuer.")));
           return;
         }
 
         if (url.searchParams.has("error")) {
-          reply(400, "Paymos sign-in cancelled", "Authorization was not approved.");
-          settle.reject(new OAuthSessionError("oauth_denied", "Authorization was denied or failed."));
+          settled = true;
+          void reply(400, "Paymos sign-in cancelled", "Authorization was not approved.")
+            .then(() => settle.reject(new OAuthSessionError("oauth_denied", "Authorization was denied or failed.")));
           return;
         }
 
         const code = url.searchParams.get("code");
         if (!code) {
-          reply(400, "Paymos sign-in failed", "Authorization code was missing.");
-          settle.reject(new OAuthSessionError("oauth_failed", "Authorization code was missing."));
+          settled = true;
+          void reply(400, "Paymos sign-in failed", "Authorization code was missing.")
+            .then(() => settle.reject(new OAuthSessionError("oauth_failed", "Authorization code was missing.")));
           return;
         }
 
-        reply(200, "Paymos connected", "Sign-in is complete. You can close this window.");
-        settle.resolve(code);
+        settled = true;
+        void reply(200, "Paymos connected", "Sign-in is complete. You can close this window.")
+          .then(() => settle.resolve(code));
       });
 
       await new Promise<void>((resolve, reject) => {
@@ -613,8 +644,17 @@ export function startBrowserLoginFlow(options: OAuthSessionOptions = {}): Browse
       } finally {
         clearTimeout(timer);
         options.signal?.removeEventListener("abort", onAbort);
-        server.closeAllConnections?.();
-        await new Promise<void>(resolve => server.close(() => resolve()));
+        server.closeIdleConnections?.();
+        await new Promise<void>(resolve => {
+          const forceCloseTimer = setTimeout(() => {
+            server.closeAllConnections?.();
+          }, 250);
+          forceCloseTimer.unref?.();
+          server.close(() => {
+            clearTimeout(forceCloseTimer);
+            resolve();
+          });
+        });
       }
 
       const body = new URLSearchParams({

@@ -276,7 +276,6 @@ describe("oauth-session", process.platform === "win32" ? { timeout: 25_000 } : {
   });
 
   it.each([
-    { label: "wrong state", state: "forged-state", iss: "https://app.paymos.io/", expectedError: /^oauth_state_mismatch:/ },
     { label: "missing iss", state: "match", iss: null, expectedError: /^oauth_issuer_mismatch:/ },
     { label: "wrong iss", state: "match", iss: "https://evil.example/", expectedError: /^oauth_issuer_mismatch:/ },
     { label: "access_denied", state: "match", iss: "https://app.paymos.io/", error: "access_denied", expectedError: /^oauth_denied:/ },
@@ -300,11 +299,73 @@ describe("oauth-session", process.platform === "win32" ? { timeout: 25_000 } : {
         else redirect.searchParams.set("code", "should_never_be_exchanged");
         const resp = await fetch(redirect);
         expect(resp.status).toBe(400);
+        expect(resp.headers.get("connection")).toBe("close");
       },
     })).rejects.toThrow(testCase.expectedError);
 
     expect(tokenSpy).not.toHaveBeenCalled();
     expect(existsSync(tokenPath)).toBe(false);
+  });
+
+  it("ignores stray missing/mismatched state requests without aborting and flushes HTML with Connection: close before closing", async () => {
+    const root = makeTempRoot();
+    const tokenPath = join(root, "mcp", "merchant-oauth.json");
+    const origin = "https://app.paymos.io";
+    const issuer = `${origin}/`;
+    const nowMs = 1_700_000_000_000;
+    const fetchMock = mockMetadataFetch(origin, issuer, params => {
+      expect(params.get("code")).toBe("auth_code_after_stray");
+      return Response.json({
+        access_token: "at_after_stray",
+        refresh_token: "rt_after_stray",
+        expires_in: 300,
+      });
+    });
+
+    const session = await loginWithBrowser({
+      origin,
+      tokenFile: tokenPath,
+      fetch: fetchMock,
+      now: () => nowMs,
+      openBrowser: async rawUrl => {
+        const authUrl = new URL(rawUrl);
+        const redirectBase = authUrl.searchParams.get("redirect_uri")!;
+
+        // 1. Missing state -> HTTP 400, server stays alive.
+        const missingState = new URL(redirectBase);
+        missingState.searchParams.set("code", "stray_missing");
+        missingState.searchParams.set("iss", issuer);
+        const missingResp = await fetch(missingState);
+        expect(missingResp.status).toBe(400);
+        expect(missingResp.headers.get("connection")).toBe("close");
+        expect(await missingResp.text()).toContain("Authorization state validation failed.");
+
+        // 2. Wrong/forged state -> HTTP 400, server still stays alive.
+        const wrongState = new URL(redirectBase);
+        wrongState.searchParams.set("code", "stray_forged");
+        wrongState.searchParams.set("state", "forged-state");
+        wrongState.searchParams.set("iss", issuer);
+        const wrongResp = await fetch(wrongState);
+        expect(wrongResp.status).toBe(400);
+        expect(wrongResp.headers.get("connection")).toBe("close");
+        expect(await wrongResp.text()).toContain("Authorization state validation failed.");
+
+        // 3. Real callback arrives afterward -> HTTP 200 with full HTML body and Connection: close.
+        const valid = new URL(redirectBase);
+        valid.searchParams.set("code", "auth_code_after_stray");
+        valid.searchParams.set("state", authUrl.searchParams.get("state")!);
+        valid.searchParams.set("iss", issuer);
+        const validResp = await fetch(valid);
+        expect(validResp.status).toBe(200);
+        expect(validResp.headers.get("connection")).toBe("close");
+        const html = await validResp.text();
+        expect(html).toContain("Paymos connected");
+        expect(html).toContain("</html>");
+      },
+    });
+
+    expect(session.access_token).toBe("at_after_stray");
+    expect(session.refresh_token).toBe("rt_after_stray");
   });
 
   it("serializes concurrent refresh under ReuseLeeway=Zero and skips refresh when disk already rotated", async () => {

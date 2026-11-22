@@ -1,0 +1,34 @@
+---
+description: Paymos Merchant API, checkout, webhook verification, Sandbox testing, and Merchant MCP integration guardrails
+alwaysApply: false
+---
+
+# Paymos Integration & Merchant MCP Guardrails
+
+Apply these Paymos product and security invariants whenever building, reviewing, or testing a Paymos integration or using Paymos Merchant MCP (`https://app.paymos.io/connect/merchant-mcp`).
+
+## Assets, Networks, and Currencies
+
+- **5 settlement assets**: 4 stablecoins (`USDT`, `USDC`, `USD1`, `DAI`) plus 1 gold-backed asset (`XAUT`). Never describe or classify `XAUT` as a stablecoin.
+- **13 deposit networks / 11 withdrawal networks**: Deposit on `TRC20`, `ERC20`, `BEP20`, `POLYGON`, `ARBITRUM`, `OPTIMISM`, `BASE`, `TON` (native gas coin `GRAM`; network code remains `TON`), `AVAX`, `SOL`, `NEAR`, `PLASMA`, `SUI`. **NEAR** and **SUI** are **deposit-only**; only 11 networks support withdrawals.
+- **45 fiat invoicing currencies**: FX rate locks at `confirm-payment`. No card processing, no BTC/native gas-asset invoice payments, no forced conversion, and no bank off-ramps.
+
+## API Contracts and Idempotency
+
+- **String amounts**: Always pass monetary amounts as exact decimal strings, never floating-point numbers.
+- **Separate key types**: Payment keys (`pk_`) cover invoices, payment channels, and refunds; Payout keys (`rk_`) cover withdrawals and balances. Merchant API uses HMAC-SHA256; the Low-Code widget (`/v1/paymos-widget.js`) uses publishable `X-Sdk-Key` on `/public/v1/sdk` and requires explicit `PaymosWidget.mount('#selector', { ... })` (no auto-init `data-*` API).
+- **Idempotency & environment isolation**: Reuse `external_order_id` for invoices/withdrawals (`wgt_` is reserved for the widget) and `(project_id, external_id)` for payment channels. Keep Sandbox (`pk_test_` / `sk_test_`) and Production (`pk_live_` / `sk_live_`) strictly isolated.
+
+## Closed-Set Statuses, Webhooks, and Finality
+
+- **9 invoice statuses**: `awaiting_client`, `awaiting_payment`, `confirming`, `underpaid_waiting`, `paid`, `paid_over`, `underpaid`, `expired`, `cancelled`.
+- **9 invoice webhook events**: `invoice.awaiting_payment`, `invoice.confirming`, `invoice.paid`, `invoice.paid_over`, `invoice.underpaid`, `invoice.underpaid_waiting`, `invoice.expired`, `invoice.cancelled`, and the note-only `invoice.paid_late` (sets `paid_late_at` on a closed `expired`/`underpaid` invoice without reopening it—log a note for manual review, never auto-fulfill).
+- **3 payment channel events**: `payment_channel.deposit.confirming`, `payment_channel.deposit.confirmed`, `payment_channel.deposit.reorged` (credit only on `confirmed` with `is_final: true`).
+- **6 withdrawal events**: `withdrawal.created`, `withdrawal.processing`, `withdrawal.completed`, `withdrawal.failed`, `withdrawal.cancelled`, `withdrawal.completion_rewound` (branch on `is_final`).
+- **Webhook verification**: Verify `X-Webhook-Signature` (`t={unix},v1={hmac_hex}`) against the exact raw body `{timestamp}.{raw_body}` with constant-time HMAC-SHA256, parsing `v1` as a list for dual-`v1=` 24-hour rotation windows (`300` s default tolerance). Deduplicate by `event_id` from the verified JSON body (never `X-Webhook-Id`, which is outside the signature and for logs only). Reverse-verify via `GET /v1/invoices/{id}` before fulfilling; never fulfill on `confirming` or browser redirect alone.
+
+## Merchant MCP Handoffs and Secret Safety
+
+- On `status: "user_action_required"`, always output the full clickable `continue_url` verbatim in chat, wait for confirmation, and retry with the exact same `operation_id`.
+- Never echo raw `sk_...` or `whsec_...` secrets in chat; use `npx -y @paymos/mcp install-secret` (`otk_*` tickets) for `.env` delivery.
+- Withdrawal whitelist addresses are managed only in the Paymos Dashboard (not via MCP or Merchant API).

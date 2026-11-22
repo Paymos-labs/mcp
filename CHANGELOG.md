@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-22
+
+- feat(mcp): add multi-AI Git plugin wrapper, Codex hybrid OAuth, agents install panel and per-AI docs tabs
+- fix(mcp,oauth,blazor,arch): harden Merchant MCP OAuth/scopes/pagination/UI, fix Blazor lifecycle/overview/DashButton Role, add MigrationSafetyTests and NEAR timeout guard (BUG-1431, BUG-1441..1446, BUG-1458..1460, BUG-1468..1471, BUG-1475, BUG-1477, BUG-1482)
+
+- feat(mcp): add multi-AI Git plugin wrapper manifests (Claude Code, OpenAI Codex, Antigravity, Gemini CLI, GitHub Copilot CLI, Cursor, Agent Plugins 1.0, and Official MCP Registry `server.json` / `mcpName`), shared `rules/`, square `assets/logo.svg`, and 4 cross-platform Paymos Agent Skills (`paymos-integrate`, `paymos-webhooks`, `paymos-sandbox`, `paymos-workspace`) over remote Streamable HTTP Merchant MCP (`https://app.paymos.io/connect/merchant-mcp`) without inflating the `@paymos/mcp` npm tarball
+- feat(mcp): auto-open default browser and print/return full clickable `continue_url` and `authorize_url` handoff links in `connect`, `setup`, and `auth` with non-blocking background OAuth PKCE for any browser alongside canonical 6-cell TOTP + Passkey confirmation
+- feat(mcp): make `npx -y @paymos/mcp setup` the single zero-key onboarding entrypoint with optional `[Y/n]` browser OAuth sign-in, moving key-based Sandbox flow under `--sandbox`
+- feat(mcp): compile `27` Paymos documentation pages (`paymos://docs/*`), `CONNECT_INSTRUCTIONS`, and offline `paymos_auth_status`, `recommend_payment_integration` (12 CMS + widget + POS + invoices + channels), and `verify_webhook_signature` tools into `connect` (`191` tools total before login)
+- ui(dashboard): unify `/developers/agents` around `npx -y @paymos/mcp setup` and direct MCP URL
+- feat(mcp): connect a merchant account from Codex or Claude Code through Paymos OAuth, with Owner consent and dashboard connection management
+- feat(mcp): add proof-bound `install-secret`, `upload-file`, and `download-file` helpers alongside local Sandbox
+
 ## [1.9.1] - 2026-11-20
 
 - fix(audit): sync MCP resources & SDK 2.7.1, WebBackend OpenAPI/types, invoice products UI, and 6-locale checkout/agent docs

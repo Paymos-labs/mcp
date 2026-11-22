@@ -1,0 +1,33 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.paymos/mcp",
+  "description": "Paymos Merchant MCP: stablecoin & XAUT payments, Sandbox testing, webhooks, and merchant tools.",
+  "version": "1.10.0",
+  "repository": {
+    "url": "https://github.com/Paymos-labs/mcp",
+    "source": "github"
+  },
+  "websiteUrl": "https://paymos.io/docs/mcp",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@paymos/mcp",
+      "version": "1.10.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "connect"
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://app.paymos.io/connect/merchant-mcp"
+    }
+  ]
+}
