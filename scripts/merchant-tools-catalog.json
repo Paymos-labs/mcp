@@ -1314,7 +1314,6 @@
                     "MMK",
                     "SAR",
                     "TWD",
-                    "VES",
                     null
                   ]
                 },
@@ -4593,7 +4592,6 @@
                 "MMK",
                 "SAR",
                 "TWD",
-                "VES",
                 null
               ],
               "default": null
@@ -4832,7 +4830,7 @@
   },
   {
     "name": "merchant_initialize_project_widget",
-    "description": "Initialize checkout appearance. The default form type is stripe.",
+    "description": "Initialize checkout appearance. The default form type is classic.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8177,8 +8175,7 @@
                       "LKR",
                       "MMK",
                       "SAR",
-                      "TWD",
-                      "VES"
+                      "TWD"
                     ]
                   }
                 },
@@ -8229,8 +8226,7 @@
                     "LKR",
                     "MMK",
                     "SAR",
-                    "TWD",
-                    "VES"
+                    "TWD"
                   ]
                 },
                 "networks": {
@@ -9292,7 +9288,6 @@
                     "MMK",
                     "SAR",
                     "TWD",
-                    "VES",
                     null
                   ]
                 },

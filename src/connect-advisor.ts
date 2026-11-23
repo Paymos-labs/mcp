@@ -434,7 +434,7 @@ function buildScenarioAdvice(
         scenario,
         recommendation: "pos_terminal",
         summary:
-          "Use the browser-based Paymos POS Terminal for in-person payments on a phone or tablet with zero hardware pairing. Each Terminal project provides one project URL supporting 46 fiat invoicing currencies, locks the FX rate when the payer confirms asset and network, shows a QR payment URI/address, and keeps the confirmed screen until the cashier taps to start the next amount.",
+          "Use the browser-based Paymos POS Terminal for in-person payments on a phone or tablet with zero hardware pairing. Each Terminal project provides one project URL supporting 45 fiat invoicing currencies, locks the FX rate when the payer confirms asset and network, shows a QR payment URI/address, and keeps the confirmed screen until the cashier taps to start the next amount.",
         recommended_docs: [
           "paymos://docs/widget-terminal",
           "paymos://docs/supported-currencies",

@@ -10,7 +10,7 @@
       "name": "paymos",
       "source": "./",
       "description": "Integrate Paymos stablecoin & XAUT payments, verify webhooks, test in Sandbox, and manage your merchant account over remote Merchant MCP.",
-      "version": "1.10.0"
+      "version": "1.11.0"
     }
   ]
 }

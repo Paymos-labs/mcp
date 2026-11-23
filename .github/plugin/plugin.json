@@ -1,6 +1,6 @@
 {
   "name": "paymos",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Official Paymos plugin for GitHub Copilot CLI: remote Streamable HTTP Merchant MCP (OAuth 2.1) and 4 Paymos Agent Skills.",
   "author": {
     "name": "Paymos Labs"

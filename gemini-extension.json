@@ -1,6 +1,6 @@
 {
   "name": "paymos",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Official Paymos Merchant MCP extension for Gemini CLI: stablecoin & XAUT payments, signed webhooks, Sandbox testing, and 188 workspace tools over OAuth 2.1.",
   "contextFileName": "rules/AGENTS.md",
   "mcpServers": {

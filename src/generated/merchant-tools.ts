@@ -1323,7 +1323,6 @@ export const MERCHANT_TOOLS: readonly MerchantToolDefinition[] = [
                     "MMK",
                     "SAR",
                     "TWD",
-                    "VES",
                     null
                   ]
                 },
@@ -4602,7 +4601,6 @@ export const MERCHANT_TOOLS: readonly MerchantToolDefinition[] = [
                 "MMK",
                 "SAR",
                 "TWD",
-                "VES",
                 null
               ],
               "default": null
@@ -4841,7 +4839,7 @@ export const MERCHANT_TOOLS: readonly MerchantToolDefinition[] = [
   },
   {
     "name": "merchant_initialize_project_widget",
-    "description": "Initialize checkout appearance. The default form type is stripe.",
+    "description": "Initialize checkout appearance. The default form type is classic.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -8186,8 +8184,7 @@ export const MERCHANT_TOOLS: readonly MerchantToolDefinition[] = [
                       "LKR",
                       "MMK",
                       "SAR",
-                      "TWD",
-                      "VES"
+                      "TWD"
                     ]
                   }
                 },
@@ -8238,8 +8235,7 @@ export const MERCHANT_TOOLS: readonly MerchantToolDefinition[] = [
                     "LKR",
                     "MMK",
                     "SAR",
-                    "TWD",
-                    "VES"
+                    "TWD"
                   ]
                 },
                 "networks": {
@@ -9301,7 +9297,6 @@ export const MERCHANT_TOOLS: readonly MerchantToolDefinition[] = [
                     "MMK",
                     "SAR",
                     "TWD",
-                    "VES",
                     null
                   ]
                 },
