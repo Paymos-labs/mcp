@@ -2,7 +2,7 @@
   "name": "paymos",
   "displayName": "Paymos",
   "description": "Integrate Paymos stablecoin & XAUT payments, verify signed webhooks, test end-to-end in Sandbox, and manage your merchant workspace over remote Merchant MCP.",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [
     "Recommend the best Paymos payment integration for my store or backend stack",

@@ -1,5 +1,7 @@
 # @paymos/mcp
 
+[![Paymos MCP server](https://glama.ai/mcp/servers/Paymos-labs/mcp/badge)](https://glama.ai/mcp/servers/Paymos-labs/mcp)
+
 Official Paymos MCP server and multi-AI plugin wrapper: install Paymos natively into Claude Code, OpenAI Codex, Antigravity, Gemini CLI, GitHub Copilot CLI, Cursor, or any Agent Skills client from `Paymos-labs/mcp` over remote Streamable HTTP OAuth 2.1 (`188` merchant workspace and Sandbox tools, no local Node.js required) — or run the local `@paymos/mcp` CLI/stdio bridge for offline docs, integration advisor, `.env`/file helpers (`191` tools total in `connect`), or key-based Local Sandbox (`--sandbox`).
 
 ## Install as an AI plugin (recommended — no Node.js required)
@@ -332,6 +334,22 @@ In `--sandbox` mode, five documentation pages (`DOC_RESOURCES`) remain available
 The server opens no network listener (outside the temporary loopback callback during browser OAuth) and calls the Merchant API through `@paymos/sdk` in `--sandbox` mode. Setup output does not print secret values. Check your chosen client and model provider's logging settings separately. Setup stores OAuth tokens and Sandbox keys in separate local files; on Unix, new credential and token files use mode `0600` in a private directory. On Windows, access follows the account directory's permissions; the file is not encrypted by setup.
 
 In `--sandbox` mode, live (`pk_live_`/`sk_live_`) and payout (`rk_…`) keys are rejected during setup, at server startup, and on tool calls. After checking your integration in the sandbox, run your own application with its live keys. The `--sandbox` server stays outside production payment paths.
+
+## Frequently Asked Questions
+
+### How does Paymos MCP work without exposing API keys to the LLM?
+Native AI plugins (Claude Code, OpenAI Codex, Cursor, Antigravity, Gemini CLI, GitHub Copilot CLI) connect over remote Streamable HTTP to `https://app.paymos.io/connect/merchant-mcp` using OAuth 2.1 PKCE — no raw API keys are stored in prompts or IDE config files. In local CLI mode (`npx -y @paymos/mcp setup`), OAuth tokens live under OS-protected user directories outside workspace configs, and `install-secret` writes merchant keys directly into `.env` without echoing them into LLM context.
+
+### What cryptocurrencies and networks does Paymos support?
+Paymos supports **5 assets** — four stablecoins (**USDT, USDC, USD1, DAI**) and one gold-backed asset (**XAUT**) — across **13 mainnet networks** for incoming payments (`TRC20, ERC20, BEP20, POLYGON, ARBITRUM, OPTIMISM, BASE, TON, AVAX, SOL, NEAR, SUI, PLASMA`) and **11 networks** for withdrawals (`NEAR` and `Sui` are deposit-only). Settlement stays in the accepted asset with **1.0%** standard incoming fee and **0%** Paymos withdrawal commission (network fees only).
+
+### Can an AI agent move live funds or bypass payout whitelists?
+No. Merchant MCP enforces the authenticated user's exact Paymos role (`Owner`, `Admin`, `Finance`, `Developer`, `Custom`). Sensitive Production actions return `user_action_required` with a dashboard `continue_url` for explicit human step-up confirmation, and the withdrawal address whitelist is enabled by default and managed in the dashboard.
+
+### What is the difference between 188 remote tools and 191 CLI tools?
+Direct remote HTTP connections (`https://app.paymos.io/connect/merchant-mcp`) expose **188** server workspace and Sandbox tools (`162` `merchant_*`, `25` `playground_*`, and `get_connection_status`). Running the local `@paymos/mcp connect` stdio wrapper adds **3** zero-network offline helpers (`paymos_auth_status`, `recommend_payment_integration`, `verify_webhook_signature`) plus `27` compiled `paymos://docs/*` pages, for **191** tools total.
+
+Full documentation: [Paymos MCP & AI Agents Guide](https://paymos.io/docs/mcp) · [AI Agents Product Page](https://paymos.io/product/ai-agents)
 
 ## Development
 

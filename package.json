@@ -1,7 +1,7 @@
 {
   "name": "@paymos/mcp",
   "mcpName": "io.paymos/mcp",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "description": "Official Paymos MCP server and multi-AI plugin wrapper (Claude Code, OpenAI Codex, Antigravity, Gemini CLI, GitHub Copilot CLI, Cursor, Agent Skills): remote OAuth 2.1 Merchant MCP with 188 workspace and Sandbox tools, plus local stdio bridge with offline docs, integration advisor, and key-based Sandbox.",
   "keywords": [
     "paymos",

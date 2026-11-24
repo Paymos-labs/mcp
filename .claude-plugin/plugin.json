@@ -1,6 +1,6 @@
 {
   "name": "paymos",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "description": "Official Paymos plugin for Claude Code: remote Streamable HTTP Merchant MCP (OAuth 2.1) and 4 Paymos Agent Skills for integration, webhooks, Sandbox testing, and workspace operations.",
   "author": {
     "name": "Paymos Labs",

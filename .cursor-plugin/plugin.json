@@ -1,6 +1,6 @@
 {
   "name": "paymos",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "description": "Official Paymos plugin for Cursor: remote Streamable HTTP Merchant MCP (OAuth 2.1), Paymos guardrails (.mdc), and 4 Paymos Agent Skills.",
   "author": {
     "name": "Paymos Labs"

@@ -48,3 +48,35 @@ jobs:
           ! grep -q "sk_test_smoke" "$smoke_err"
           cd "$GITHUB_WORKSPACE"
       - run: npm publish --access public
+
+  mcp-registry:
+    needs: npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+      - name: Verify server.json version parity
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(node -p 'require("./server.json").version')"
+          pkg_actual="$(node -p 'require("./server.json").packages[0].version')"
+          test "$actual" = "$expected"
+          test "$pkg_actual" = "$expected"
+      - name: Publish to Official MCP Registry
+        env:
+          MCP_REGISTRY_DNS_DOMAIN: ${{ vars.MCP_REGISTRY_DNS_DOMAIN }}
+          MCP_REGISTRY_DNS_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_DNS_PRIVATE_KEY }}
+        run: |
+          if [ -z "$MCP_REGISTRY_DNS_PRIVATE_KEY" ] || [ -z "$MCP_REGISTRY_DNS_DOMAIN" ]; then
+            echo "::notice::Skipping Official MCP Registry publish: configure MCP_REGISTRY_DNS_DOMAIN and MCP_REGISTRY_DNS_PRIVATE_KEY after DNS TXT verification."
+            exit 0
+          fi
+          curl -fsSL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz | tar -xz mcp-publisher
+          chmod +x ./mcp-publisher
+          ./mcp-publisher login dns --domain "$MCP_REGISTRY_DNS_DOMAIN" --private-key "$MCP_REGISTRY_DNS_PRIVATE_KEY"
+          ./mcp-publisher publish
+

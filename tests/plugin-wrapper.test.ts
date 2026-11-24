@@ -589,5 +589,38 @@ describe("README canonical multi-AI plugin install commands (pw-05)", () => {
     }
 
     expect(readme).not.toContain("npx codex-marketplace");
+    expect(readme).toContain("## Frequently Asked Questions");
+    expect(readme).toContain("https://glama.ai/mcp/servers/Paymos-labs/mcp");
+  });
+
+  it("ships square 256x256 and 400x400 PNG logos, glama.json, non-root Dockerfile, and Official MCP Registry CI job", () => {
+    for (const [relPath, size] of [
+      ["assets/logo-256.png", 256],
+      ["assets/logo-400.png", 400],
+    ] as const) {
+      const pngPath = resolve(packageRoot, relPath);
+      expect(existsSync(pngPath), `Expected PNG logo at ${relPath}`).toBe(true);
+      const png = readFileSync(pngPath);
+      expect(png.subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      expect(png.readUInt32BE(16)).toBe(size);
+      expect(png.readUInt32BE(20)).toBe(size);
+    }
+
+    const glama = readJsonObject("glama.json");
+    expect(glama.$schema).toBe("https://glama.ai/mcp/schemas/server.json");
+    expect(Array.isArray(glama.maintainers)).toBe(true);
+    expect((glama.maintainers as unknown[]).length).toBeGreaterThanOrEqual(1);
+
+    const dockerfilePath = resolve(packageRoot, "Dockerfile");
+    expect(existsSync(dockerfilePath)).toBe(true);
+    const dockerfile = readFileSync(dockerfilePath, "utf8");
+    expect(dockerfile).toContain("FROM node:22-alpine");
+    expect(dockerfile).toContain("USER node");
+    expect(dockerfile).toContain('ENTRYPOINT ["node", "dist/index.js"]');
+
+    const publishYml = readFileSync(resolve(packageRoot, ".github/workflows/publish.yml"), "utf8");
+    expect(publishYml).toContain("mcp-registry:");
+    expect(publishYml).toContain("needs: npm");
+    expect(publishYml).toContain("mcp-publisher publish");
   });
 });

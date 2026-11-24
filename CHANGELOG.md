@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-11-24
+
+- fix(mcp): keep only paymos-dev maintainer in glama.json [release:patch]
+- fix(mcp): publish marketplace PNG logos, Dockerfile, Glama metadata, and MCP Registry CI job [release:patch]
+- chore(mcp,n8n): add marketplace PNG logos, Dockerfile, Glama badge/config, MCP Registry CI job, and GEO FAQs
+
+- chore(mcp): add square 256x256 and 400x400 PNG logos, non-root `Dockerfile`, `glama.json` maintainer metadata, Glama badge, GEO FAQ section, and Official MCP Registry CI job (`publish.yml`)
+- feat(mcp): add multi-AI Git plugin wrapper manifests (Claude Code, OpenAI Codex, Antigravity, Gemini CLI, GitHub Copilot CLI, Cursor, Agent Plugins 1.0, and Official MCP Registry `server.json` / `mcpName`), shared `rules/`, square `assets/logo.svg`, and 4 cross-platform Paymos Agent Skills (`paymos-integrate`, `paymos-webhooks`, `paymos-sandbox`, `paymos-workspace`) over remote Streamable HTTP Merchant MCP (`https://app.paymos.io/connect/merchant-mcp`) without inflating the `@paymos/mcp` npm tarball
+- feat(mcp): auto-open default browser and print/return full clickable `continue_url` and `authorize_url` handoff links in `connect`, `setup`, and `auth` with non-blocking background OAuth PKCE for any browser alongside canonical 6-cell TOTP + Passkey confirmation
+- feat(mcp): make `npx -y @paymos/mcp setup` the single zero-key onboarding entrypoint with optional `[Y/n]` browser OAuth sign-in, moving key-based Sandbox flow under `--sandbox`
+- feat(mcp): compile `27` Paymos documentation pages (`paymos://docs/*`), `CONNECT_INSTRUCTIONS`, and offline `paymos_auth_status`, `recommend_payment_integration` (12 CMS + widget + POS + invoices + channels), and `verify_webhook_signature` tools into `connect` (`191` tools total before login)
+- ui(dashboard): unify `/developers/agents` around `npx -y @paymos/mcp setup` and direct MCP URL
+- feat(mcp): connect a merchant account from Codex or Claude Code through Paymos OAuth, with Owner consent and dashboard connection management
+- feat(mcp): add proof-bound `install-secret`, `upload-file`, and `download-file` helpers alongside local Sandbox
+
 ## [1.11.0] - 2026-11-23
 
 - fix(checkout,pos,studio,chat): resolve 36 audit defects, BUG-1211 tails, and mobile edge chat launcher
