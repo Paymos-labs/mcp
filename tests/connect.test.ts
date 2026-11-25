@@ -635,7 +635,7 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
     expect(sActive.raw).not.toContain("rt_active_secret_token");
   });
 
-  it("runs recommend_payment_integration for all 7 scenarios and all 12 CMS platforms offline without network or browser", async () => {
+  it("runs recommend_payment_integration for all 7 scenarios and all 15 CMS platforms offline without network or browser", async () => {
     const tokenFile = makeTempTokenFile();
     const io = createPipeSession();
     const fetchMock = vi.fn<typeof fetch>();
@@ -663,6 +663,9 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
       ["hikashop", "paymos://docs/cms-hikashop", "Paymos-labs/hikashop"],
       ["givewp", "paymos://docs/cms-givewp", "Paymos-labs/givewp"],
       ["odoo", "paymos://docs/cms-odoo", "Paymos-labs/odoo"],
+      ["blesta", "paymos://docs/cms-blesta", "Paymos-labs/blesta"],
+      ["fossbilling", "paymos://docs/cms-fossbilling", "Paymos-labs/fossbilling"],
+      ["paymenter", "paymos://docs/cms-paymenter", "Paymos-labs/paymenter"],
     ];
 
     const calls: Array<{ id: string; arguments: Record<string, unknown> }> = [
@@ -737,15 +740,17 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
     // Unknown scenario -> isError: true
     expect(byId.get("s_invalid")!.isError).toBe(true);
 
-    // All 12 CMS auto-detections (including repository metadata parity)
+    // All 15 CMS auto-detections (including repository metadata parity)
     for (const [idx, [, expectedDoc, expectedRepo]] of cmsCases.entries()) {
       const body = JSON.parse(byId.get(`cms_${idx}`)!.content[0]!.text) as {
         scenario: string;
         detected_cms?: { doc_uri: string; repository?: string };
+        supported_cms_plugins?: Array<{ id: string }>;
       };
       expect(body.scenario).toBe("cms_plugin");
       expect(body.detected_cms?.doc_uri).toBe(expectedDoc);
       expect(body.detected_cms?.repository).toBe(expectedRepo);
+      expect(body.supported_cms_plugins).toHaveLength(15);
     }
 
     expect(fetchMock).not.toHaveBeenCalled();

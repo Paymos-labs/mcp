@@ -142,6 +142,27 @@ const CMS_CATALOG: readonly CmsCatalogEntry[] = [
     repository: "Paymos-labs/odoo",
     aliases: ["odoo", "odoo20", "odoo200", "paymentpaymos", "cmsodoo"],
   },
+  {
+    id: "blesta",
+    name: "Blesta",
+    doc_uri: "paymos://docs/cms-blesta",
+    repository: "Paymos-labs/blesta",
+    aliases: ["blesta", "cmsblesta"],
+  },
+  {
+    id: "fossbilling",
+    name: "FOSSBilling",
+    doc_uri: "paymos://docs/cms-fossbilling",
+    repository: "Paymos-labs/fossbilling",
+    aliases: ["fossbilling", "cmsfossbilling"],
+  },
+  {
+    id: "paymenter",
+    name: "Paymenter",
+    doc_uri: "paymos://docs/cms-paymenter",
+    repository: "Paymos-labs/paymenter",
+    aliases: ["paymenter", "cmspaymenter"],
+  },
 ];
 
 const SERVER_SDKS = [
@@ -223,12 +244,12 @@ export const LOCAL_CONNECT_TOOLS: readonly LocalToolDefinition[] = [
           type: "string",
           enum: [...INTEGRATION_SCENARIOS],
           description:
-            "Choose cms_plugin for one of the 12 supported CMS plugins, checkout_widget for the Low-Code JS Pay button/iframe, pos_terminal for the browser-based in-person QR terminal, order_checkout for server-side per-order invoices, repeat_deposits for permanent customer deposit addresses (payment channels), both for invoices plus payment channels, or unsure to ask clarifying questions.",
+            "Choose cms_plugin for one of the 15 supported CMS plugins, checkout_widget for the Low-Code JS Pay button/iframe, pos_terminal for the browser-based in-person QR terminal, order_checkout for server-side per-order invoices, repeat_deposits for permanent customer deposit addresses (payment channels), both for invoices plus payment channels, or unsure to ask clarifying questions.",
         },
         platform_or_cms: {
           type: "string",
           description:
-            "Optional CMS or platform name (e.g. woocommerce, whmcs, prestashop, magento2, opencart, shopware6, cscart, easy-digital-downloads, drupal-commerce, hikashop, givewp, odoo, or custom stack).",
+            "Optional CMS or platform name (e.g. woocommerce, whmcs, prestashop, magento2, opencart, shopware6, cscart, easy-digital-downloads, drupal-commerce, hikashop, givewp, odoo, blesta, fossbilling, paymenter, or custom stack).",
         },
         has_backend: {
           type: "boolean",
@@ -390,8 +411,8 @@ function buildScenarioAdvice(
       const summary = detectedCms
         ? `Use the official Paymos plugin for ${detectedCms.name}. Connect it in one step using the plugin's "Connect Paymos" button and browser approval (both Sandbox and Live credentials plus webhooks are provisioned automatically without manually copying API keys).`
         : platformOrCms
-          ? `No dedicated Paymos CMS plugin matches "${platformOrCms}". Paymos provides 12 official CMS plugins (listed in supported_cms_plugins); for other platforms use the Low-Code JavaScript SDK (checkout_widget) or per-order Server SDK invoices (order_checkout).`
-          : "Use one of Paymos's 12 official CMS plugins for one-click OAuth store setup (Sandbox and Live keys plus webhooks are provisioned automatically—no manual API key entry).";
+          ? `No dedicated Paymos CMS plugin matches "${platformOrCms}". Paymos provides 15 official CMS plugins (listed in supported_cms_plugins); for other platforms use the Low-Code JavaScript SDK (checkout_widget) or per-order Server SDK invoices (order_checkout).`
+          : "Use one of Paymos's 15 official CMS plugins for one-click OAuth store setup (Sandbox and Live keys plus webhooks are provisioned automatically—no manual API key entry).";
       const recommendedDocs = detectedCms
         ? [detectedCms.doc_uri, "paymos://docs/overview", "paymos://docs/webhooks-verify", "paymos://docs/testing-sandbox"]
         : ["paymos://docs/overview", "paymos://docs/widget-sdk", "paymos://docs/cms-woocommerce"];
@@ -527,7 +548,7 @@ function buildScenarioAdvice(
         scenario: "unsure",
         recommendation: "unsure",
         summary:
-          `Do not pick an integration yet—clarify the merchant's setup first. Ask: (1) Are you integrating an existing store/CMS (such as WooCommerce, WHMCS, PrestaShop, Magento 2, OpenCart, Shopware 6, CS-Cart, EDD, Drupal Commerce, HikaShop, GiveWP, or Odoo)? (2) Do you want a Low-Code Pay button on a web page or an in-person browser POS terminal without backend code? (3) Or with a backend, will customers pay per order (Invoices), repeatedly top up an account (Payment Channels), or both?${cmsHint}`,
+          `Do not pick an integration yet—clarify the merchant's setup first. Ask: (1) Are you integrating an existing store/CMS (such as WooCommerce, WHMCS, PrestaShop, Magento 2, OpenCart, Shopware 6, CS-Cart, EDD, Drupal Commerce, HikaShop, GiveWP, Odoo, Blesta, FOSSBilling, or Paymenter)? (2) Do you want a Low-Code Pay button on a web page or an in-person browser POS terminal without backend code? (3) Or with a backend, will customers pay per order (Invoices), repeatedly top up an account (Payment Channels), or both?${cmsHint}`,
         ...(detectedPayload !== undefined ? { detected_cms: detectedPayload } : {}),
         supported_cms_plugins: cmsList,
         recommended_docs: [
