@@ -5,6 +5,7 @@ import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import type { ReadableStreamReadResult } from "node:stream/web";
 import { parseEnv } from "node:util";
 import { MerchantDeliveryError } from "./gate.js";
+import { validateOrigin } from "./oauth-session.js";
 import {
   ordinaryDirectory, pathStat, privateMode, sameOpenFile, samePath, windowsStateAcl,
 } from "./private-state.js";
@@ -13,7 +14,6 @@ import { withDestinationLock } from "./setup-lock.js";
 
 export { sameOpenFile };
 
-const origin = "https://app.paymos.io";
 const resource = "/connect/merchant-mcp";
 const lifetimeMs = 5 * 60_000;
 const requestTimeoutMs = 60_000;
@@ -21,11 +21,12 @@ const stateFolder = ".paymos-mcp-delivery";
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 
 export type DeliveryKind = "install-secret" | "upload-file" | "download-file";
-type Scope = { merchantId: string; environment: "sandbox" | "production"; operationId: string };
+// origin is the Paymos stand that issued the ticket: --origin, PAYMOS_MCP_ORIGIN, or production.
+type Scope = { merchantId: string; environment: "sandbox" | "production"; operationId: string; origin: string };
 export type UploadDescriptor = { byte_length: number; content_sha256: string; content_type: string };
 export type DeliveryTarget = { directory: string; path: string; platform: NodeJS.Platform };
 type Prepare = { prepare: true; file: string; scope: Scope };
-type Redeem = { prepare: false; file: string; requestId: string; ticket: string };
+type Redeem = { prepare: false; file: string; requestId: string; ticket: string; origin: string };
 type LocalProof = Scope & { requestId: string; verifier: string; expiresAt: number };
 
 export interface DeliveryRuntime {
@@ -35,6 +36,7 @@ export interface DeliveryRuntime {
   now(): number;
   fetch: typeof fetch;
   stdout(line: string): void;
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 export function defaultDeliveryRuntime(): DeliveryRuntime {
@@ -45,6 +47,7 @@ export function defaultDeliveryRuntime(): DeliveryRuntime {
     now: Date.now,
     fetch: globalThis.fetch,
     stdout: line => console.log(line),
+    env: process.env,
   };
 }
 
@@ -70,8 +73,10 @@ function validUuid(value: unknown): value is string {
   return typeof value === "string" && uuid.test(value) && value !== "00000000-0000-0000-0000-000000000000";
 }
 
-export function deliveryArguments(argv: readonly string[], kind: DeliveryKind): Prepare | Redeem {
-  const common = ["--file", "--merchant-id", "--environment", "--operation-id", "--request-id", "--token"];
+export function deliveryArguments(
+  argv: readonly string[], kind: DeliveryKind, env: Readonly<Record<string, string | undefined>> = {},
+): Prepare | Redeem {
+  const common = ["--file", "--merchant-id", "--environment", "--operation-id", "--request-id", "--token", "--origin"];
   const flags = new Map<string, string>();
   for (let i = 0; i < argv.length; i++) {
     const raw = argv[i]!;
@@ -87,22 +92,26 @@ export function deliveryArguments(argv: readonly string[], kind: DeliveryKind): 
   }
   const file = flags.get("--file");
   if (!file) return failDelivery("delivery_arguments");
+  let origin: string;
+  try { origin = validateOrigin(flags.get("--origin") ?? env.PAYMOS_MCP_ORIGIN); }
+  catch { return failDelivery("delivery_arguments"); }
+  const optional = flags.has("--origin") ? 1 : 0;
   if (flags.has("--prepare")) {
     const merchantId = flags.get("--merchant-id")?.toLowerCase();
     const operationId = flags.get("--operation-id")?.toLowerCase();
     const environment = flags.get("--environment")?.toLowerCase();
-    if (flags.size !== 5 || !validUuid(merchantId) || !validUuid(operationId)
+    if (flags.size !== 5 + optional || !validUuid(merchantId) || !validUuid(operationId)
       || (environment !== "sandbox" && environment !== "production")) return failDelivery("delivery_arguments");
-    return { prepare: true, file, scope: { merchantId, environment, operationId } };
+    return { prepare: true, file, scope: { merchantId, environment, operationId, origin } };
   }
   const requestId = flags.get("--request-id");
   const ticket = flags.get("--token");
   const prefix = kind === "install-secret" ? "otk_" : "ftk_";
-  if (flags.size !== 3 || !isBase64Url(requestId, 32) || !ticket?.startsWith(prefix)
+  if (flags.size !== 3 + optional || !isBase64Url(requestId, 32) || !ticket?.startsWith(prefix)
     || !isBase64Url(ticket.slice(prefix.length), kind === "upload-file" ? 48 : 32)) {
     return failDelivery("delivery_arguments");
   }
-  return { prepare: false, file, requestId, ticket };
+  return { prepare: false, file, requestId, ticket, origin };
 }
 
 function inside(directory: string, path: string): boolean {
@@ -203,8 +212,9 @@ export function prepareDelivery(
   const now = runtime.now();
   const filename = requestId + ".json";
   const path = join(directory, filename);
+  const { origin, ...bound } = scope;
   const state = JSON.stringify({
-    origin, kind, ...scope, requestId, verifier, createdAt: now, expiresAt: now + lifetimeMs,
+    origin, kind, ...bound, requestId, verifier, createdAt: now, expiresAt: now + lifetimeMs,
     target: target.path, directory: target.directory, upload,
   });
   if (runtime.platform === "win32") {
@@ -245,7 +255,7 @@ export function claimDelivery(
         || stat.birthtimeNs !== before.identity.birthtimeNs) return failDelivery("delivery_state_unavailable");
       const state = parseConfig("jsonc", before.content);
       const now = runtime.now();
-      if (state.origin !== origin || state.requestId !== input.requestId || !isBase64Url(state.verifier, 32)
+      if (state.origin !== input.origin || state.requestId !== input.requestId || !isBase64Url(state.verifier, 32)
         || !validUuid(state.merchantId) || !validUuid(state.operationId)
         || (state.environment !== "sandbox" && state.environment !== "production")
         || typeof state.createdAt !== "number" || typeof state.expiresAt !== "number"
@@ -275,6 +285,7 @@ export function claimDelivery(
       return {
         requestId: input.requestId, verifier: state.verifier, expiresAt: state.expiresAt,
         merchantId: state.merchantId, environment: state.environment, operationId: state.operationId,
+        origin: input.origin,
       };
     });
   } catch (cause) {
@@ -293,7 +304,7 @@ export async function redeemDelivery(
 ): Promise<Response> {
   checkDeliveryExpiry(proof, runtime);
   const install = kind === "install-secret";
-  const url = origin + resource + (install ? "/tickets/secret/redeem" : "/files/" + input.ticket);
+  const url = proof.origin + resource + (install ? "/tickets/secret/redeem" : "/files/" + input.ticket);
   const headers = new Headers({ "Accept-Encoding": "identity", "Cache-Control": "no-store" });
   let body: RequestInit["body"];
   if (install) {
@@ -426,8 +437,8 @@ function mergeEnv(original: string, fields: Record<string, string>): string {
 
 export async function runInstallSecret(argv: readonly string[], runtime?: DeliveryRuntime): Promise<void> {
   return safeDelivery(async () => {
-    const input = deliveryArguments(argv, "install-secret");
     const io = runtime ?? defaultDeliveryRuntime();
+    const input = deliveryArguments(argv, "install-secret", io.env);
     const target = deliveryTarget(input.file, io);
     const before = snapshot(target.path);
     if (input.prepare) {

@@ -7,7 +7,7 @@ export const SETUP_COPY = {
   offerBrowserAuth: "Sign in to Paymos in your browser now so account and sandbox tools are ready too? [Y/n]",
   offerBrowserRetry: "Please enter y (yes) or n (no) [Y/n]",
   referenceReady:
-    "Paymos is ready in offline reference and integration-advisor mode (27 docs, advisor, and webhook verifier). Account/sandbox tools will prompt browser sign-in only when called.",
+    "Paymos is ready in offline reference and integration-advisor mode (30 docs, advisor, and webhook verifier). Account/sandbox tools will prompt browser sign-in only when called.",
   loginSkippedAfterConfig:
     "Your MCP client configuration remains saved in offline reference and advisor mode. Run `npx -y @paymos/mcp setup` again or call an account tool later to sign in.",
   help: `Usage: npx -y @paymos/mcp setup [options]

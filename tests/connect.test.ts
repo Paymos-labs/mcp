@@ -120,7 +120,7 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
     }
   });
 
-  it("serves startup RPC, instructions, 27 doc resources, and 191 tools locally pre-login without network or browser", async () => {
+  it("serves startup RPC, instructions, 30 doc resources, and 191 tools locally pre-login without network or browser", async () => {
     const tokenFile = makeTempTokenFile();
     const io = createPipeSession();
     const fetchMock = vi.fn<typeof fetch>();
@@ -171,7 +171,7 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
     expect(CONNECT_INSTRUCTIONS).toContain("event_id");
     expect(responses[1]).toEqual({ jsonrpc: "2.0", id: 2, result: {} });
     const resourcesResult = responses[2]!.result as { resources: Array<{ uri: string; mimeType: string }> };
-    expect(resourcesResult.resources).toHaveLength(27);
+    expect(resourcesResult.resources).toHaveLength(30);
     expect(resourcesResult.resources.map(r => r.uri)).toEqual(CONNECT_DOC_RESOURCES.map(r => r.uri));
     expect(responses[3]).toEqual({ jsonrpc: "2.0", id: 4, result: { resourceTemplates: [] } });
     expect(responses[4]).toEqual({ jsonrpc: "2.0", id: 5, result: { prompts: [] } });
@@ -497,7 +497,7 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
     expect(responses.map(r => r.id).sort()).toEqual(["p1", "p2", "p3", "p4"]);
   });
 
-  it("reads all 27 CONNECT_DOC_RESOURCES locally and returns InvalidParams on missing/unknown URIs", async () => {
+  it("reads all 30 CONNECT_DOC_RESOURCES locally and returns InvalidParams on missing/unknown URIs", async () => {
     const tokenFile = makeTempTokenFile();
     const io = createPipeSession();
     const fetchMock = vi.fn<typeof fetch>();
@@ -539,6 +539,56 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
     }
     expect(responses[sampleUris.length]!.error).toMatchObject({ code: ErrorCode.InvalidParams });
     expect(responses[sampleUris.length + 1]!.error).toMatchObject({ code: ErrorCode.InvalidParams });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(openBrowser).not.toHaveBeenCalled();
+  });
+
+  it("serves offline every CMS guide the integration advisor points to, including Blesta, FOSSBilling, and Paymenter", async () => {
+    const tokenFile = makeTempTokenFile();
+    const io = createPipeSession();
+    const fetchMock = vi.fn<typeof fetch>();
+    const openBrowser = vi.fn();
+
+    const run = runConnect(["--token-file", tokenFile], {}, {
+      stdin: io.stdin,
+      stdout: io.stdout,
+      stderr: io.stderr,
+      fetch: fetchMock,
+      openBrowser,
+    });
+
+    io.send({
+      jsonrpc: "2.0",
+      id: "advice",
+      method: "tools/call",
+      params: { name: "recommend_payment_integration", arguments: { scenario: "cms_plugin" } },
+    });
+    const [advice] = await io.readResponses(1);
+    const body = JSON.parse((advice!.result as { content: Array<{ text: string }> }).content[0]!.text) as {
+      supported_cms_plugins: Array<{ id: string; doc_uri: string }>;
+    };
+    const docUris = body.supported_cms_plugins.map(plugin => plugin.doc_uri);
+    expect(docUris).toHaveLength(15);
+    expect(docUris).toEqual(expect.arrayContaining([
+      "paymos://docs/cms-blesta",
+      "paymos://docs/cms-fossbilling",
+      "paymos://docs/cms-paymenter",
+    ]));
+
+    for (const [idx, uri] of docUris.entries()) {
+      io.send({ jsonrpc: "2.0", id: `doc${idx}`, method: "resources/read", params: { uri } });
+    }
+    const reads = await io.readResponses(docUris.length);
+    io.stdin.end();
+    await expect(run).resolves.toBe(0);
+
+    for (const [idx, uri] of docUris.entries()) {
+      const read = reads.find(response => response.id === `doc${idx}`)!;
+      expect(read.error, uri).toBeUndefined();
+      const contents = (read.result as { contents: Array<{ uri: string; text: string }> }).contents;
+      expect(contents[0]!.uri).toBe(uri);
+      expect(contents[0]!.text.trim().length).toBeGreaterThan(200);
+    }
     expect(fetchMock).not.toHaveBeenCalled();
     expect(openBrowser).not.toHaveBeenCalled();
   });
@@ -948,6 +998,64 @@ describe("connect stdio OAuth bridge", process.platform === "win32" ? { timeout:
     ioPending.stdin.end();
     await expect(runPending).resolves.toBe(0);
     await expect(fetch(pendingRedirect)).rejects.toThrow();
+  });
+
+  it("explains a background sign-in that failed after approval once, instead of silently opening the browser again", async () => {
+    const tokenFile = makeTempTokenFile();
+    const origin = "https://dev-local.paymos.io";
+    const issuer = `${origin}/`;
+    const openedUrls: string[] = [];
+    const fetchMock = mockAuthFetch(origin, issuer, async url => {
+      if (url === `${origin}/connect/token`) return new Response("unavailable", { status: 503 });
+      return new Response("Not Found", { status: 404 });
+    });
+
+    const io = createPipeSession();
+    const run = runConnect(["--origin", origin, "--token-file", tokenFile], {}, {
+      stdin: io.stdin,
+      stdout: io.stdout,
+      stderr: io.stderr,
+      fetch: fetchMock,
+      loginFastPathMs: 25,
+      loginTimeoutMs: 60_000,
+      openBrowser: rawUrl => {
+        openedUrls.push(rawUrl);
+      },
+    });
+
+    io.send({ jsonrpc: "2.0", id: "first", method: "tools/call", params: { name: "get_connection_status", arguments: {} } });
+    const [first] = await io.readResponses(1);
+    expect((first!.result as { structuredContent: Record<string, unknown> }).structuredContent)
+      .toMatchObject({ reason: "login_required" });
+    expect(openedUrls).toHaveLength(1);
+
+    // The user approves in the browser, but saving the sign-in fails in the background.
+    const authUrl = new URL(openedUrls[0]!);
+    const redirect = new URL(authUrl.searchParams.get("redirect_uri")!);
+    redirect.searchParams.set("code", "code_after_approval");
+    redirect.searchParams.set("state", authUrl.searchParams.get("state")!);
+    redirect.searchParams.set("iss", issuer);
+    await fetch(redirect).catch(() => undefined);
+    for (let i = 0; i < 40 && !fetchMock.mock.calls.some(([u]) => String(u) === `${origin}/connect/token`); i++) {
+      await new Promise(resolve => setTimeout(resolve, 15));
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    io.send({ jsonrpc: "2.0", id: "second", method: "tools/call", params: { name: "get_connection_status", arguments: {} } });
+    const [second] = await io.readResponses(1);
+    expect(second!.error).toMatchObject({ code: ErrorCode.InternalError });
+    expect((second!.error as { message: string }).message).toContain("Token exchange failed with HTTP 503");
+    expect(openedUrls).toHaveLength(1);
+
+    // After the explanation the next call starts a fresh sign-in.
+    io.send({ jsonrpc: "2.0", id: "third", method: "tools/call", params: { name: "get_connection_status", arguments: {} } });
+    const [third] = await io.readResponses(1);
+    expect((third!.result as { structuredContent: Record<string, unknown> }).structuredContent)
+      .toMatchObject({ reason: "login_required" });
+    expect(openedUrls).toHaveLength(2);
+
+    io.stdin.end();
+    await expect(run).resolves.toBe(0);
   });
 
   it("auto-opens safe relative/absolute continue_url once per 60s, rewrites full URLs, and blocks unsafe URLs", async () => {

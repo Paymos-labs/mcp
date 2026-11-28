@@ -11,7 +11,7 @@ import { isDeepStrictEqual } from "node:util";
 import { applyEdits, modify, parse as parseJson, parseTree, type Node, type ParseError } from "jsonc-parser";
 import { parse as parseToml, stringify as stringifyToml, type TomlTable } from "smol-toml";
 import {
-  AuthError, planConnectTargets, publishConnectPlans, resolveClientsForSetup, type AuthSessionHooks,
+  AuthError, connectTokenFile, planConnectTargets, publishConnectPlans, resolveClientsForSetup, type AuthSessionHooks,
 } from "./auth.js";
 import type { PaymosMcpCredentials } from "./config.js";
 import { readCredentialFile } from "./credential-file.js";
@@ -586,7 +586,11 @@ export async function runSetup(
     return 130;
   }
 
-  const plans = planConnectTargets(clients, flags.config, origin, env, normalizedContext);
+  const tokenFile = flags.tokenFile !== undefined
+    ? absolute(flags.tokenFile, normalizedContext)
+    : defaultTokenPath(env, normalizedContext);
+  const plans = planConnectTargets(
+    clients, flags.config, origin, env, normalizedContext, connectTokenFile(tokenFile, env, normalizedContext));
   if (flags.dryRun) {
     for (const plan of plans) {
       io.log(AUTH_COPY.preview(plan.client, plan.before.path, plan.name));
@@ -608,9 +612,6 @@ export async function runSetup(
     return 0;
   }
 
-  const tokenFile = flags.tokenFile !== undefined
-    ? absolute(flags.tokenFile, normalizedContext)
-    : defaultTokenPath(env, normalizedContext);
   try {
     await loginWithBrowser({
       origin,

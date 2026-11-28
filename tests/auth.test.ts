@@ -11,8 +11,8 @@ import {
 } from "../src/auth.js";
 import { loadCredentials } from "../src/config.js";
 import { main } from "../src/index.js";
-import { readTokenStore } from "../src/oauth-session.js";
-import { defaultConfigPath } from "../src/setup.js";
+import { defaultTokenPath, readTokenStore } from "../src/oauth-session.js";
+import { defaultConfigPath, runSetup } from "../src/setup.js";
 import { AUTH_COPY, SETUP_COPY } from "../src/setup-copy.js";
 import { DestinationBusyError, LOCK_SUFFIX, STALE_LOCK_MS, withDestinationLock } from "../src/setup-lock.js";
 
@@ -219,9 +219,56 @@ describe("paymos unified auth", process.platform === "win32" ? { timeout: 25_000
       mcp_servers: {
         paymos: {
           command: "cmd",
-          args: ["/d", "/c", "npx", "-y", "@paymos/mcp", "connect", "--origin", origin],
+          args: ["/d", "/c", "npx", "-y", "@paymos/mcp", "connect", "--origin", origin, "--token-file", f.tokenFile],
         },
       },
+    });
+  });
+
+  it("writes a non-default --token-file into the connect command for setup and auth, and omits the default path", async () => {
+    // setup --token-file: the bridge must read the sign-in from the same file, not open the browser again.
+    const fSetup = fixture("linux");
+    const customTokenFile = join(fSetup.root, "work", "paymos.json");
+    await expect(runSetup(
+      ["--client", "codex", "--no-login", "--token-file", customTokenFile],
+      fSetup.env,
+      fSetup.io,
+      fSetup.context,
+    )).resolves.toBe(0);
+    expect(parseToml(readFileSync(defaultConfigPath("codex", fSetup.env, fSetup.context), "utf8"))).toEqual({
+      mcp_servers: {
+        paymos: { command: "npx", args: ["-y", "@paymos/mcp", "connect", "--token-file", customTokenFile] },
+      },
+    });
+
+    // auth resolves "~/..." against home and writes the absolute path after --origin.
+    const fAuth = fixture("linux");
+    const origin = "https://dev-local.paymos.io";
+    const oauth = mockOAuthHooks(origin);
+    await expect(runAuth(
+      ["--client", "cursor", "--origin", origin, "--token-file", "~/work/paymos.json"],
+      fAuth.env,
+      fAuth.io,
+      fAuth.context,
+      oauth.hooks,
+    )).resolves.toBe(0);
+    const homeTokenFile = join(fAuth.home, "work", "paymos.json");
+    expect(readTokenStore(homeTokenFile).origins[origin]?.access_token).toBe("at_auth_browser_1");
+    expect(parseJson(readFileSync(defaultConfigPath("cursor", fAuth.env, fAuth.context), "utf8")).mcpServers.paymos).toEqual({
+      command: "npx",
+      args: ["-y", "@paymos/mcp", "connect", "--origin", origin, "--token-file", homeTokenFile],
+    });
+
+    // The default token path needs no flag, so the entry stays the plain connect command.
+    const fDefault = fixture("linux");
+    await expect(runAuth(
+      ["--client", "codex", "--no-login", "--token-file", defaultTokenPath(fDefault.env, fDefault.context)],
+      fDefault.env,
+      fDefault.io,
+      fDefault.context,
+    )).resolves.toBe(0);
+    expect(parseToml(readFileSync(defaultConfigPath("codex", fDefault.env, fDefault.context), "utf8"))).toEqual({
+      mcp_servers: { paymos: { command: "npx", args: ["-y", "@paymos/mcp", "connect"] } },
     });
   });
 
@@ -247,7 +294,7 @@ describe("paymos unified auth", process.platform === "win32" ? { timeout: 25_000
     ]);
 
     const oauth = mockOAuthHooks();
-    await expect(runAuth(["--token-file", f.tokenFile], f.env, f.io, f.context, oauth.hooks)).resolves.toBe(0);
+    await expect(runAuth([], f.env, f.io, f.context, oauth.hooks)).resolves.toBe(0);
     expect(oauth.getLoginCount()).toBe(1);
 
     const antigravityRaw = readFileSync(join(f.home, ".gemini", "config", "mcp_config.json"), "utf8");

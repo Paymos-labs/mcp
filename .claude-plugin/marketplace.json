@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Official Paymos plugin marketplace for Claude Code: remote OAuth Merchant MCP and 4 Paymos Agent Skills.",
-    "version": "1.12.0"
+    "version": "1.12.1"
   },
   "plugins": [
     {
       "name": "paymos",
       "source": "./",
       "description": "Integrate Paymos stablecoin & XAUT payments, verify webhooks, test in Sandbox, and manage your merchant account over remote Merchant MCP.",
-      "version": "1.12.0"
+      "version": "1.12.1"
     }
   ]
 }

@@ -480,7 +480,7 @@ describe("cross-platform Paymos Agent Skills & rules truth (pw-02)", () => {
     }
 
     const integrate = readFileSync(resolve(packageRoot, "skills/paymos-integrate/SKILL.md"), "utf8");
-    for (const token of ["USDT", "USDC", "USD1", "DAI", "XAUT", "gold-backed", "13", "11", "NEAR", "SUI", "45", "12", "PaymosWidget.mount", "install-secret"]) {
+    for (const token of ["USDT", "USDC", "USD1", "DAI", "XAUT", "gold-backed", "13", "11", "NEAR", "SUI", "45", "15", "PaymosWidget.mount", "install-secret"]) {
       expect(integrate, `paymos-integrate must mention ${token}`).toContain(token);
     }
 
@@ -622,5 +622,10 @@ describe("README canonical multi-AI plugin install commands (pw-05)", () => {
     expect(publishYml).toContain("mcp-registry:");
     expect(publishYml).toContain("needs: npm");
     expect(publishYml).toContain("mcp-publisher publish");
+    // The binary that receives the io.paymos DNS key is a pinned official release checked against its SHA-256.
+    expect(publishYml).not.toContain("releases/latest");
+    expect(publishYml).toMatch(/MCP_PUBLISHER_VERSION: v\d+\.\d+\.\d+\n/);
+    expect(publishYml).toMatch(/MCP_PUBLISHER_SHA256: [0-9a-f]{64}\n/);
+    expect(publishYml).toContain("sha256sum -c -");
   });
 });

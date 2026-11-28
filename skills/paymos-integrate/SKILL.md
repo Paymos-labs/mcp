@@ -1,6 +1,6 @@
 ---
 name: paymos-integrate
-description: Choose and implement the right Paymos payment integration (12 official CMS plugins, Low-Code JS widget, browser POS terminal, Hosted Checkout, Host-to-Host API, Telegram Bot checkout, Payment Channels, and 8 server SDKs) with accurate Paymos asset/network rules and zero-secret .env delivery.
+description: Choose and implement the right Paymos payment integration (15 official CMS plugins, Low-Code JS widget, browser POS terminal, Hosted Checkout, Host-to-Host API, Telegram Bot checkout, Payment Channels, and 8 server SDKs) with accurate Paymos asset/network rules and zero-secret .env delivery.
 ---
 
 # Paymos Integration Guide
@@ -20,7 +20,7 @@ When `@paymos/mcp connect` is available locally, you can call `recommend_payment
 
 | Path | Best For | Key Mechanics & Boundaries |
 |---|---|---|
-| **12 Official CMS Plugins** | Turnkey e-commerce & donations | One-click `Connect Paymos` OAuth approval provisions both Sandbox and Live Payment keys plus the Invoice webhook automatically—never ask the merchant to paste API keys manually. Reconnecting updates rotated keys. |
+| **15 Official CMS Plugins** | Turnkey e-commerce & donations | One-click `Connect Paymos` OAuth approval provisions both Sandbox and Live Payment keys plus the Invoice webhook automatically—never ask the merchant to paste API keys manually. Reconnecting updates rotated keys. |
 | **Low-Code JS Widget** (`/v1/paymos-widget.js`) | Fast Pay button on any web page without backend HMAC signing | Two lines: `<script>` plus explicit `PaymosWidget.mount('#selector', { ... })` (**no auto-init and no `data-*` attribute API**). Amount priority: `price_id` → static `amount` → `get_amount` callback → `amount_selector` (reads `.value`) → `pos_url`. Modes: iframe overlay (default) or `redirect`. Authenticated with publishable `X-Sdk-Key` against `/public/v1/sdk` (separate from Merchant API; **one allowed browser origin per project**). Window events: `paymos:opened`, `paymos:closed`, `paymos:succeeded`, `paymos:failed`, `paymos:error`. |
 | **Browser POS Terminal** | In-person counter payments on phone/tablet | Zero hardware pairing; one terminal URL per Terminal project (integration method is fixed at project creation and cannot be toggled afterward). Supports **45 fiat invoicing currencies**, locks FX rate at `confirm-payment`, shows QR payment URI/address, and stays on the confirmed screen until the cashier taps to start the next payment. |
 | **Hosted Checkout** (`POST /v1/invoices`) | Custom backend per-order checkout | Fixed amount (fiat or crypto), expiry window, optional `customer_fee_percent` (`0–100`), optional display-only `products[]` (1–50 items, no image field), idempotent via `external_order_id` (`wgt_` prefix is reserved for the widget), returns `payment_url`. Hosted/embedded surfaces always keep the "Secured by Paymos" footer (no custom CNAME). |
@@ -28,7 +28,7 @@ When `@paymos/mcp connect` is available locally, you can call `recommend_payment
 | **Telegram Bot Checkout** | Payers paying directly inside Telegram | Project checkout channel where `payment_url` is a Telegram bot deep link (`?start=inv_{id}`); the bot confirms asset/network inside Telegram and renders an address-only QR code. |
 | **Payment Channels** (`POST /v1/payment-channels`) | Recurring customer balance top-ups | Permanent deposit addresses per enabled network for one payer (`external_id`), idempotent creation (`200` on replay with current addresses/minimums), no fixed amount or expiry. Transfers below the live per-rail `minimum_deposit` are skipped (neither credited nor returned; absent `minimum_deposit` means unavailable, never zero). Credit only on `payment_channel.deposit.confirmed` with `is_final: true` and reconcile via the 24-hour cursor deposit feed. |
 
-### 12 Official CMS Plugins
+### 15 Official CMS Plugins
 
 | Platform | Repository | Notes |
 |---|---|---|
@@ -44,6 +44,9 @@ When `@paymos/mcp connect` is available locally, you can call `recommend_payment
 | HikaShop (Joomla) | `Paymos-labs/hikashop` | Joomla 5.4/6.2; forwards `products[]` |
 | GiveWP | `Paymos-labs/givewp` | One-time donations (amount-only, no `products[]`) |
 | Odoo 20.0 | `Paymos-labs/odoo` | Self-hosted Odoo 20.0; forwards `products[]` |
+| Blesta | `Paymos-labs/blesta` | Blesta 5.x/6.x; forwards `products[]`; package not published yet |
+| FOSSBilling | `Paymos-labs/fossbilling` | FOSSBilling 0.7+/2.0; forwards `products[]`; package not published yet |
+| Paymenter | `Paymos-labs/paymenter` | Paymenter 1.x; forwards `products[]`; package not published yet |
 
 ### 8 Official Server SDKs
 

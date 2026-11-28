@@ -112,6 +112,14 @@ function absolute(path: string, context: SetupContext): string {
   return resolve(context.cwd, path);
 }
 
+/**
+ * The token file `connect` must read, or undefined when it is the default path, so the
+ * written entry stays the plain `connect` command.
+ */
+export function connectTokenFile(tokenFile: string, env: Env, context: SetupContext): string | undefined {
+  return samePath(tokenFile, defaultTokenPath(env, context), context.platform) ? undefined : tokenFile;
+}
+
 function assertConfigLocation(path: string, platform: NodeJS.Platform): void {
   if (!isAbsolute(path)) fail("configuration_scope_unknown");
   for (let parent = dirname(path); ; parent = dirname(parent)) {
@@ -160,6 +168,7 @@ export function buildConnectEntry(
   client: SetupClient | "glm",
   origin: string,
   platform: NodeJS.Platform,
+  tokenFile?: string,
 ): JsonObject {
   const normalized = client === "glm" ? "zcode" : client;
   const command = platform === "win32" ? "cmd" : "npx";
@@ -169,6 +178,7 @@ export function buildConnectEntry(
     "@paymos/mcp",
     "connect",
     ...(origin !== DEFAULT_ORIGIN ? ["--origin", origin] : []),
+    ...(tokenFile !== undefined ? ["--token-file", tokenFile] : []),
   ];
   if (normalized === "opencode") {
     return { type: "local", command: [command, ...args], enabled: true };
@@ -245,6 +255,7 @@ function planTargetClient(
   configPath: string,
   origin: string,
   platform: NodeJS.Platform,
+  tokenFile: string | undefined,
 ): TargetPlan {
   assertConfigLocation(configPath, platform);
   let before: Snapshot;
@@ -267,7 +278,7 @@ function planTargetClient(
     return fail("configuration_scope_unknown");
   }
 
-  const targetEntry = buildConnectEntry(client, origin, platform);
+  const targetEntry = buildConnectEntry(client, origin, platform, tokenFile);
   const hasPaymos = Object.hasOwn(entries, "paymos");
   const hasMerchant = Object.hasOwn(entries, "paymos-merchant");
   const paymosVal = entries.paymos;
@@ -376,10 +387,11 @@ export function planConnectTargets(
   origin: string,
   env: Env,
   context: SetupContext,
+  tokenFile?: string,
 ): TargetPlan[] {
   return clients.map(client => {
     const configPath = resolveTargetPath(client, explicitConfig, env, context);
-    return planTargetClient(client, configPath, origin, context.platform);
+    return planTargetClient(client, configPath, origin, context.platform, tokenFile);
   });
 }
 
@@ -469,7 +481,11 @@ export async function runAuth(
     return 130;
   }
 
-  const plans = planConnectTargets(clients, flags.config, origin, env, context);
+  const tokenFile = flags.tokenFile !== undefined
+    ? absolute(flags.tokenFile, context)
+    : defaultTokenPath(env, context);
+  const plans = planConnectTargets(
+    clients, flags.config, origin, env, context, connectTokenFile(tokenFile, env, context));
 
   if (flags.dryRun) {
     for (const plan of plans) {
@@ -479,9 +495,6 @@ export async function runAuth(
   }
 
   if (!flags.noLogin) {
-    const tokenFile = flags.tokenFile !== undefined
-      ? absolute(flags.tokenFile, context)
-      : defaultTokenPath(env, context);
     try {
       await loginWithBrowser({
         origin,

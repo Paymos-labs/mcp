@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-11-28
+
+- fix(mcp): offline CMS guides, token-file, origin, sign-in errors, pinned publisher
+- docs(plugins): add 6-language READMEs (EN/zh-CN/ru/es/de/tr) and YouTube walkthrough previews across all 25 Paymos-labs repos
+
+- fix(mcp): `merchant_update_project_widget` keeps the saved `allowed_origin` and `is_active` when they are omitted (`is_active` is now optional; an empty `allowed_origin` still clears the origin)
+- fix(mcp): serve the Blesta, FOSSBilling and Paymenter guides offline (`30` compiled `paymos://docs/*` pages) so every CMS the advisor recommends can be read via `resources/read`; docs and the `paymos-integrate` skill now list all 15 official CMS plugins
+- fix(mcp): `setup` and `auth` write a non-default `--token-file` into the `connect` command, so the bridge reads the saved sign-in instead of opening the browser again
+- fix(mcp): `install-secret`, `upload-file` and `download-file` accept `--origin` (or `PAYMOS_MCP_ORIGIN`) and bind the prepared proof to that origin
+- fix(mcp): `connect` explains a background sign-in that failed after approval once, instead of silently opening a new sign-in
+- ci(mcp): pin `mcp-publisher` to an official release and verify its SHA-256 before it receives the registry DNS key
+
 ## [1.12.0] - 2026-11-25
 
 - feat(cms): rebuild Blesta, FOSSBilling, and Paymenter to full Paymos CMS lifecycle standard [skip ecosystem release]

@@ -98,7 +98,7 @@ try {
 assert.match(stderr, /sandbox session ready/);
 assert(!stderr.includes(secret) && !stderr.includes(webhookSecret));
 
-// Packed Merchant MCP bridge smoke (`connect` initialize + 27 docs + 191 tools + offline advisor/status without browser login).
+// Packed Merchant MCP bridge smoke (`connect` initialize + 30 docs + 191 tools + offline advisor/status without browser login).
 const connectTokenFile = join(temp, "oauth-private", "merchant-oauth.json");
 const connectEnv = { ...isolatedEnv };
 delete connectEnv.PAYMOS_API_KEY_ID;
@@ -125,9 +125,9 @@ try {
   assert.match(instructions, /operation_id/);
 
   const connectResources = (await connectClient.listResources()).resources;
-  assert.equal(connectResources.length, 27);
+  assert.equal(connectResources.length, 30);
   const docUris = new Set(connectResources.map(resource => resource.uri));
-  assert.equal(docUris.size, 27);
+  assert.equal(docUris.size, 30);
   assert(docUris.has("paymos://docs/overview"));
   assert(docUris.has("paymos://docs/cms-woocommerce"));
   assert(docUris.has("paymos://docs/webhooks-verify"));
@@ -233,6 +233,6 @@ const zcodeConfig = JSON.parse(readFileSync(join(authHome, ".zcode", "cli", "con
 assert(zcodeConfig.mcp.servers.paymos);
 assert(JSON.stringify(zcodeConfig.mcp.servers.paymos).includes("connect"));
 
-console.log(JSON.stringify({ packageSmoke: "pass", tools: 15, merchantTools: 188, connectTools: 191, resources: 5, connectResources: 27, privateFile: true,
+console.log(JSON.stringify({ packageSmoke: "pass", tools: 15, merchantTools: 188, connectTools: 191, resources: 5, connectResources: 30, privateFile: true,
   installedBinSetup: "pass", installedBinSetupConnect: "pass", installedBinAuth: "pass", connectSmoke: "pass",
   configuredLauncher: "pass", repeat: "pass", help: "pass", signatureFromFile: "pass", networkTests: "not run" }));

@@ -102,6 +102,8 @@ const discoveryCache = new WeakMap<typeof fetch, Map<string, AuthMetadata>>();
 const refreshLocks = new Map<string, Promise<string | undefined>>();
 const loginLocks = new Map<string, Promise<StoredOriginSession>>();
 const pendingBrowserLogins = new Map<string, PendingBrowserLogin>();
+// A background sign-in that failed after the user acted is explained once on the next call.
+const failedBrowserLogins = new Map<string, string>();
 
 function isLoopbackHost(hostname: string): boolean {
   return hostname === "127.0.0.1" || hostname === "localhost";
@@ -900,6 +902,14 @@ export async function acquireConnectAccessToken(
   const key = lockKey(tokenPath, origin, platform);
 
   let pending = pendingBrowserLogins.get(key);
+  const failure = pending ? undefined : failedBrowserLogins.get(key);
+  if (failure !== undefined) {
+    failedBrowserLogins.delete(key);
+    throw new OAuthSessionError(
+      "oauth_failed",
+      `Background Paymos sign-in did not finish (${failure}). Retry the tool call to sign in again.`,
+    );
+  }
   if (!pending || pending.signal?.aborted) {
     const flow = startBrowserLoginFlow(options);
     const entry: PendingBrowserLogin = {
@@ -914,22 +924,24 @@ export async function acquireConnectAccessToken(
           pendingBrowserLogins.delete(key);
         }
       },
-      () => {
+      (error: unknown) => {
         if (pendingBrowserLogins.get(key) === entry) {
           pendingBrowserLogins.delete(key);
+          const reason = backgroundLoginFailure(error);
+          if (reason !== undefined) failedBrowserLogins.set(key, reason);
         }
       },
     );
   }
 
-  const authorizeUrl = await pending.authorizeUrl;
-  const fastPathMs = options.loginFastPathMs ?? DEFAULT_LOGIN_FAST_PATH_MS;
-  if (fastPathMs <= 0) {
-    return { status: "login_required", authorizeUrl };
-  }
-
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
+    const authorizeUrl = await pending.authorizeUrl;
+    const fastPathMs = options.loginFastPathMs ?? DEFAULT_LOGIN_FAST_PATH_MS;
+    if (fastPathMs <= 0) {
+      return { status: "login_required", authorizeUrl };
+    }
+
     const outcome = await Promise.race([
       pending.session.then(session => ({ kind: "ready" as const, accessToken: session.access_token })),
       new Promise<{ readonly kind: "timeout" }>(resolve => {
@@ -940,7 +952,25 @@ export async function acquireConnectAccessToken(
       return { status: "ready", accessToken: outcome.accessToken };
     }
     return { status: "login_required", authorizeUrl };
+  } catch (error) {
+    // This caller already receives the failure; do not report it a second time.
+    failedBrowserLogins.delete(key);
+    throw error;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+/**
+ * Reason worth reporting for a background sign-in failure, or undefined when the user
+ * denied, cancelled, or let it time out: then the next call simply opens a new sign-in.
+ */
+function backgroundLoginFailure(error: unknown): string | undefined {
+  if (error instanceof OAuthSessionError) {
+    return error.code === "oauth_denied" || error.code === "oauth_cancelled" || error.code === "oauth_timeout"
+      ? undefined
+      : error.message;
+  }
+  if (error instanceof PrivateStateError) return error.message;
+  return "unexpected error";
 }

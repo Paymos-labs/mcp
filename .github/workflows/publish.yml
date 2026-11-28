@@ -70,12 +70,17 @@ jobs:
         env:
           MCP_REGISTRY_DNS_DOMAIN: ${{ vars.MCP_REGISTRY_DNS_DOMAIN }}
           MCP_REGISTRY_DNS_PRIVATE_KEY: ${{ secrets.MCP_REGISTRY_DNS_PRIVATE_KEY }}
+          # Official modelcontextprotocol/registry release; bump both from its registry_<version>_checksums.txt.
+          MCP_PUBLISHER_VERSION: v1.8.9
+          MCP_PUBLISHER_SHA256: 4d527ca8f1ced0394c962dc925c2a4a4addef441cbefd62501c875e9481823a8
         run: |
           if [ -z "$MCP_REGISTRY_DNS_PRIVATE_KEY" ] || [ -z "$MCP_REGISTRY_DNS_DOMAIN" ]; then
             echo "::notice::Skipping Official MCP Registry publish: configure MCP_REGISTRY_DNS_DOMAIN and MCP_REGISTRY_DNS_PRIVATE_KEY after DNS TXT verification."
             exit 0
           fi
-          curl -fsSL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz | tar -xz mcp-publisher
+          curl -fsSL -o mcp-publisher.tar.gz "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum -c -
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
           chmod +x ./mcp-publisher
           ./mcp-publisher login dns --domain "$MCP_REGISTRY_DNS_DOMAIN" --private-key "$MCP_REGISTRY_DNS_PRIVATE_KEY"
           ./mcp-publisher publish

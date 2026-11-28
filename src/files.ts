@@ -54,8 +54,8 @@ function readUpload(target: DeliveryTarget): { bytes: Buffer; descriptor: Upload
 
 export async function runUploadFile(argv: readonly string[], runtime?: DeliveryRuntime): Promise<void> {
   return safeDelivery(async () => {
-    const input = deliveryArguments(argv, "upload-file");
     const io = runtime ?? defaultDeliveryRuntime();
+    const input = deliveryArguments(argv, "upload-file", io.env);
     const target = deliveryTarget(input.file, io);
     const upload = readUpload(target);
     if (input.prepare) {
@@ -70,8 +70,8 @@ export async function runUploadFile(argv: readonly string[], runtime?: DeliveryR
 
 export async function runDownloadFile(argv: readonly string[], runtime?: DeliveryRuntime): Promise<void> {
   return safeDelivery(async () => {
-    const input = deliveryArguments(argv, "download-file");
     const io = runtime ?? defaultDeliveryRuntime();
+    const input = deliveryArguments(argv, "download-file", io.env);
     const target = deliveryTarget(input.file, io);
     if (assertDeliveryTarget(target)) failDelivery("delivery_unsafe_path");
     if (input.prepare) {

@@ -616,7 +616,7 @@ describe("universal zero-key setup", process.platform === "win32" ? { timeout: 2
     ).resolves.toBe(130);
     expect(parseJson(readFileSync(cursorPath, "utf8")).mcpServers.paymos).toEqual({
       command: "npx",
-      args: ["-y", "@paymos/mcp", "connect"],
+      args: ["-y", "@paymos/mcp", "connect", "--token-file", fDeny.tokenFile],
     });
     expect(fDeny.logs.join("\n")).toContain(SETUP_COPY.loginSkippedAfterConfig);
     expect(fDeny.logs.join("\n")).toContain(SETUP_COPY.restart);
@@ -635,7 +635,7 @@ describe("universal zero-key setup", process.platform === "win32" ? { timeout: 2
       ),
     ).resolves.toBe(1);
     expect(parseToml(readFileSync(codexPath, "utf8")).mcp_servers).toEqual({
-      paymos: { command: "npx", args: ["-y", "@paymos/mcp", "connect"] },
+      paymos: { command: "npx", args: ["-y", "@paymos/mcp", "connect", "--token-file", fFail.tokenFile] },
     });
     expect(fFail.logs.join("\n")).toContain("auth_failed:");
     expect(fFail.logs.join("\n")).toContain(SETUP_COPY.loginSkippedAfterConfig);

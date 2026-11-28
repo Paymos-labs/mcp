@@ -75,18 +75,24 @@ const CONNECT_SLUGS = [
   "cms-hikashop",
   "cms-givewp",
   "cms-odoo",
+  "cms-blesta",
+  "cms-fossbilling",
+  "cms-paymenter",
 ] as const;
 
 const EXPECTED_CONNECT_URIS = [
   "paymos://docs/api-keys",
+  "paymos://docs/cms-blesta",
   "paymos://docs/cms-cscart",
   "paymos://docs/cms-drupal-commerce",
   "paymos://docs/cms-easy-digital-downloads",
+  "paymos://docs/cms-fossbilling",
   "paymos://docs/cms-givewp",
   "paymos://docs/cms-hikashop",
   "paymos://docs/cms-magento2",
   "paymos://docs/cms-odoo",
   "paymos://docs/cms-opencart",
+  "paymos://docs/cms-paymenter",
   "paymos://docs/cms-prestashop",
   "paymos://docs/cms-shopware6",
   "paymos://docs/cms-whmcs",
@@ -113,13 +119,13 @@ afterEach(() => {
 });
 
 describe("connect doc resources", () => {
-  it("preserves exact 5 v1 DOC_RESOURCES and emits 27 unique CONNECT_DOC_RESOURCES", () => {
+  it("preserves exact 5 v1 DOC_RESOURCES and emits 30 unique CONNECT_DOC_RESOURCES", () => {
     expect(DOC_RESOURCES).toHaveLength(5);
     expect(DOC_RESOURCES.map((resource) => resource.uri).sort()).toEqual(RESOURCE_URIS);
 
-    expect(CONNECT_DOC_RESOURCES).toHaveLength(27);
+    expect(CONNECT_DOC_RESOURCES).toHaveLength(30);
     const uris = CONNECT_DOC_RESOURCES.map((resource) => resource.uri);
-    expect(new Set(uris).size).toBe(27);
+    expect(new Set(uris).size).toBe(30);
     expect([...uris].sort()).toEqual(EXPECTED_CONNECT_URIS);
     for (const resource of CONNECT_DOC_RESOURCES) {
       expect(resource.mimeType).toBe("text/html");
@@ -181,7 +187,7 @@ describe("resource generation guards (task 4.1)", () => {
     expect(result.stderr).toContain("empty");
   });
 
-  it("emits all five v1 and 27 connect resources from a valid manifest into an isolated output", () => {
+  it("emits all five v1 and 30 connect resources from a valid manifest into an isolated output", () => {
     const manifestPath = join(mkdtempSync(join(tmpdir(), "paymos-mcp-resources-")), "docs-manifest.json");
     const pages = CONNECT_SLUGS.map((slug) => ({
       slug,
@@ -196,7 +202,7 @@ describe("resource generation guards (task 4.1)", () => {
     const result = runGenerator({ PAYMOS_DOCS_MANIFEST: manifestPath, PAYMOS_RESOURCES_OUT: isolatedOutput });
     expect(result.status).toBe(0);
     const emitted = readFileSync(isolatedOutput, "utf8");
-    expect(emitted.match(/"uri": "paymos:\/\//g)?.length).toBe(32);
+    expect(emitted.match(/"uri": "paymos:\/\//g)?.length).toBe(35);
     expect(emitted).toContain("<p>quick-start page</p>");
     expect(emitted).toContain("<p>cms-odoo page</p>");
     expect(emitted).toContain("paymos://docs/payment-channel-deposits-list");

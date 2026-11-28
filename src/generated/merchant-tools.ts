@@ -9403,7 +9403,7 @@ export const MERCHANT_TOOLS: readonly MerchantToolDefinition[] = [
   },
   {
     "name": "merchant_update_project_widget",
-    "description": "Update checkout appearance. Omit form_type to preserve the saved layout.",
+    "description": "Update checkout appearance. Omit form_type to preserve the saved layout, allowed_origin to keep the saved origin (an empty value clears it) and is_active to keep the SDK switch.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -9468,8 +9468,11 @@ export const MERCHANT_TOOLS: readonly MerchantToolDefinition[] = [
               "additionalProperties": false
             },
             "is_active": {
-              "type": "boolean",
-              "default": true
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "default": null
             },
             "merchant_id": {
               "type": [

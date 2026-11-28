@@ -199,6 +199,24 @@ const CONNECT_RESOURCES = [
     uri: "paymos://docs/cms-odoo",
     description: "Odoo 20.0 module (payment_paymos): self-hosted checkout provider, reconciliation, and refunds.",
   },
+  {
+    name: "cms-blesta",
+    slug: "cms-blesta",
+    uri: "paymos://docs/cms-blesta",
+    description: "Blesta 5/6 gateway: Connect Paymos setup, encrypted keys, cron reconciliation, and refunds.",
+  },
+  {
+    name: "cms-fossbilling",
+    slug: "cms-fossbilling",
+    uri: "paymos://docs/cms-fossbilling",
+    description: "FOSSBilling module: Connect Paymos setup, Guest API webhook, cron sync, and refunds.",
+  },
+  {
+    name: "cms-paymenter",
+    slug: "cms-paymenter",
+    uri: "paymos://docs/cms-paymenter",
+    description: "Paymenter v1 gateway extension: Connect Paymos setup, cron sync, and Filament refunds.",
+  },
 ];
 
 function fail(message) {

@@ -1,6 +1,6 @@
 {
   "name": "paymos",
-  "version": "1.12.0",
+  "version": "1.12.1",
   "description": "Official Paymos plugin for OpenAI Codex: remote Streamable HTTP Merchant MCP (OAuth 2.1) and 4 Paymos Agent Skills for integration, webhooks, Sandbox testing, and merchant workspace operations.",
   "author": {
     "name": "Paymos Labs",
@@ -26,7 +26,7 @@
   "interface": {
     "displayName": "Paymos",
     "shortDescription": "Stablecoin payments, Sandbox testing & Merchant MCP",
-    "longDescription": "Connect OpenAI Codex to Paymos Merchant MCP over remote Streamable HTTP with OAuth 2.1. Choose the right Paymos integration (12 CMS plugins, Low-Code widget, POS terminal, 8 server SDKs, invoices, payment channels), verify signed raw-body webhooks, simulate Sandbox lifecycles, and manage your merchant workspace.",
+    "longDescription": "Connect OpenAI Codex to Paymos Merchant MCP over remote Streamable HTTP with OAuth 2.1. Choose the right Paymos integration (15 CMS plugins, Low-Code widget, POS terminal, 8 server SDKs, invoices, payment channels), verify signed raw-body webhooks, simulate Sandbox lifecycles, and manage your merchant workspace.",
     "developerName": "Paymos Labs",
     "category": "Developer Tools",
     "capabilities": [

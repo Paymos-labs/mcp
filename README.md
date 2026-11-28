@@ -1,8 +1,14 @@
 # @paymos/mcp
 
+**English** | [简体中文](docs/README.zh-CN.md) | [Русский](docs/README.ru.md) | [Español](docs/README.es.md) | [Deutsch](docs/README.de.md) | [Türkçe](docs/README.tr.md)
+
 [![Paymos MCP server](https://glama.ai/mcp/servers/Paymos-labs/mcp/badge)](https://glama.ai/mcp/servers/Paymos-labs/mcp)
 
 Official Paymos MCP server and multi-AI plugin wrapper: install Paymos natively into Claude Code, OpenAI Codex, Antigravity, Gemini CLI, GitHub Copilot CLI, Cursor, or any Agent Skills client from `Paymos-labs/mcp` over remote Streamable HTTP OAuth 2.1 (`188` merchant workspace and Sandbox tools, no local Node.js required) — or run the local `@paymos/mcp` CLI/stdio bridge for offline docs, integration advisor, `.env`/file helpers (`191` tools total in `connect`), or key-based Local Sandbox (`--sandbox`).
+
+[![Watch: Paymos API Quickstart in 10 Minutes — Sandbox to Signed Webhooks](https://i.ytimg.com/vi/aHQfHszuRBo/maxresdefault.jpg)](https://www.youtube.com/watch?v=aHQfHszuRBo)
+
+> **Video walkthrough (1:22, subtitles in 6 languages):** [Watch on YouTube](https://www.youtube.com/watch?v=aHQfHszuRBo)
 
 ## Install as an AI plugin (recommended — no Node.js required)
 
@@ -22,12 +28,12 @@ Native plugins connect directly to `https://app.paymos.io/connect/merchant-mcp` 
 
 | Skill | What it covers |
 |---|---|
-| `paymos-integrate` | Choosing and implementing Paymos integrations (12 official CMS plugins, Low-Code JS widget `/v1/paymos-widget.js` with explicit `PaymosWidget.mount()`, browser POS terminal, Hosted Checkout, Host-to-Host `confirm-payment`, Telegram Bot checkout, Payment Channels, 8 server SDKs), exact asset/network rules (4 stablecoins `USDT`/`USDC`/`USD1`/`DAI` + gold-backed `XAUT`, 13 deposit / 11 withdrawal networks, 45 fiat currencies), and zero-secret `.env` writes via `install-secret`. |
+| `paymos-integrate` | Choosing and implementing Paymos integrations (15 official CMS plugins, Low-Code JS widget `/v1/paymos-widget.js` with explicit `PaymosWidget.mount()`, browser POS terminal, Hosted Checkout, Host-to-Host `confirm-payment`, Telegram Bot checkout, Payment Channels, 8 server SDKs), exact asset/network rules (4 stablecoins `USDT`/`USDC`/`USD1`/`DAI` + gold-backed `XAUT`, 13 deposit / 11 withdrawal networks, 45 fiat currencies), and zero-secret `.env` writes via `install-secret`. |
 | `paymos-webhooks` | Raw-body `X-Webhook-Signature` HMAC-SHA256 verification (dual `v1=` 24-hour rotation windows, `300` s tolerance), `event_id` deduplication (never `X-Webhook-Id`), all 18 events (9 invoice including note-only `invoice.paid_late`, 3 payment channel, 6 withdrawal), reverse verification via `GET /v1/invoices/{id}`, and `confirmed` + `is_final: true` finality. |
 | `paymos-sandbox` | End-to-end Sandbox simulation over MCP (`paid`, `overpaid`, `underpay`, `cancel`, `paid_late`; `confirming`, `reorged`, `confirmed` channel deposits; refunds and withdrawals) with strict Sandbox/Production isolation. |
 | `paymos-workspace` | Operating a Paymos merchant workspace over Merchant MCP: role baselines (`Owner`/`Admin`/`Finance`/`Developer`/`Custom`), mandatory verbatim `continue_url` handoff and `operation_id` retry on `user_action_required`, `otk_*`/`ftk_*` local helpers, and dashboard-only withdrawal whitelist rules. |
 
-> Need offline `paymos://docs/*` pages (`27` compiled docs), offline advisor/webhook tools before login, local `.env`/file helpers (`install-secret`, `download-file`, `upload-file`), or key-based Local Sandbox (`--sandbox`)? Use the `@paymos/mcp` CLI setup below (requires Node.js 22.12+).
+> Need offline `paymos://docs/*` pages (`30` compiled docs), offline advisor/webhook tools before login, local `.env`/file helpers (`install-secret`, `download-file`, `upload-file`), or key-based Local Sandbox (`--sandbox`)? Use the `@paymos/mcp` CLI setup below (requires Node.js 22.12+).
 
 ## Quick setup (CLI bridge & offline docs)
 
@@ -42,7 +48,7 @@ npx -y @paymos/mcp setup
 1. Automatically detects installed MCP clients (`antigravity`, `claude-code`, `codex`, `kimi`, `zcode`/`glm`, `cursor`, `windsurf`, `opencode`, `claude-desktop`, and project `.vscode`), or asks in an interactive terminal if none are detected (`claude-code` and `codex` fallback in non-interactive terminals).
 2. Writes the local stdio bridge (`@paymos/mcp connect`) configuration first, preserving other servers and comments. If a local Sandbox entry already occupies `paymos`, Merchant MCP is configured side-by-side as `paymos-merchant`.
 3. Optionally offers browser OAuth 2.1 PKCE `S256` sign-in (`[Y/n]`, scopes `merchant:mcp` and `offline_access`).
-   - **Decline (`n`), pass `--no-login`, or run non-interactively:** `setup` exits `0` and leaves Paymos ready in **offline reference & integration-advisor mode** (`27` compiled `paymos://docs/*` resources + `paymos_auth_status`, `recommend_payment_integration`, and `verify_webhook_signature` with zero network calls or browser popups).
+   - **Decline (`n`), pass `--no-login`, or run non-interactively:** `setup` exits `0` and leaves Paymos ready in **offline reference & integration-advisor mode** (`30` compiled `paymos://docs/*` resources + `paymos_auth_status`, `recommend_payment_integration`, and `verify_webhook_signature` with zero network calls or browser popups).
    - **Accept (`Y` / Enter):** opens your browser to approve access and stores OAuth tokens under OS-protected permissions outside IDE configs (`%APPDATA%\Paymos\mcp\merchant-oauth.json` on Windows, `$XDG_CONFIG_HOME/paymos/mcp/merchant-oauth.json` on Unix). Even if browser sign-in is cancelled or fails, your IDE configuration remains saved for offline reference mode.
 
 Dashboard → Developers → Agents shows active connections, activity, recent operations, and Disconnect.
@@ -100,7 +106,7 @@ You can also run `npx -y @paymos/mcp auth` directly to sign in immediately via b
 
 Configured clients launch `npx -y @paymos/mcp connect` (or `cmd /d /c npx -y @paymos/mcp connect` on Windows). `connect`:
 
-- Sends `instructions` on `initialize`, serves all `27` compiled `paymos://docs/*` pages locally on `resources/list` and `resources/read`, and exposes `191` tools (`3` local offline tools + `188` merchant account and Sandbox tools) on `tools/list` without blocking IDE startup.
+- Sends `instructions` on `initialize`, serves all `30` compiled `paymos://docs/*` pages locally on `resources/list` and `resources/read`, and exposes `191` tools (`3` local offline tools + `188` merchant account and Sandbox tools) on `tools/list` without blocking IDE startup.
 - Executes `paymos_auth_status`, `recommend_payment_integration`, and `verify_webhook_signature` 100% locally with zero network calls and zero browser popups.
 - Triggers browser OAuth PKCE `S256` lazily only when calling an account or Sandbox API tool (`get_connection_status`, `merchant_*`, `playground_*`) without a valid session, and transparently refreshes expired access tokens.
 
@@ -281,7 +287,7 @@ In `--sandbox` mode, the server still reads `PAYMOS_API_KEY_ID`, `PAYMOS_API_SEC
 | Tool | Purpose |
 |---|---|
 | `paymos_auth_status` | Read local Paymos OAuth sign-in state (`active`, `refreshable`, `none`) and active origin with zero network calls or browser launch |
-| `recommend_payment_integration` | Offline integration advisor covering `cms_plugin` (12 official CMS plugins), `checkout_widget`, `pos_terminal`, `order_checkout`, `repeat_deposits`, `both`, and `unsure`, plus SDKs, supported networks/assets, and webhook rules |
+| `recommend_payment_integration` | Offline integration advisor covering `cms_plugin` (15 official CMS plugins), `checkout_widget`, `pos_terminal`, `order_checkout`, `repeat_deposits`, `both`, and `unsure`, plus SDKs, supported networks/assets, and webhook rules |
 | `verify_webhook_signature` | Verify `X-Webhook-Signature` against the raw webhook body locally using `@paymos/sdk` (supports dual-`v1=` secret rotation; uses `secret` or `PAYMOS_WEBHOOK_SECRET`) |
 
 When signed in (or on first call after lazy OAuth), `connect` also exposes `188` merchant account and Sandbox tools (`get_connection_status`, `merchant_*`, `playground_*`).
@@ -316,10 +322,10 @@ Tool errors use `{ "code": "paymos/<api_error_code>", "message": "…" }`. Sandb
 
 ## Resources
 
-In `connect` mode, `27` documentation pages (`CONNECT_DOC_RESOURCES`) are compiled at build time and served locally via `resources/list` and `resources/read` without network access or OAuth:
+In `connect` mode, `30` documentation pages (`CONNECT_DOC_RESOURCES`) are compiled at build time and served locally via `resources/list` and `resources/read` without network access or OAuth:
 
 - Core & checkout: `paymos://docs/overview`, `paymos://docs/quick-start`, `paymos://docs/payment-flow`, `paymos://docs/hosted-checkout`, `paymos://docs/supported-currencies`, `paymos://docs/widget-sdk`, `paymos://docs/widget-terminal`, `paymos://docs/server-sdks`, `paymos://docs/api-keys`, `paymos://docs/webhooks`, `paymos://docs/webhooks-verify`, `paymos://docs/testing-sandbox`, `paymos://docs/payment-channels-create`, `paymos://docs/payment-channel-deposits-list`, `paymos://docs/errors`
-- Official CMS plugins (`12`): `paymos://docs/cms-woocommerce`, `paymos://docs/cms-whmcs`, `paymos://docs/cms-prestashop`, `paymos://docs/cms-magento2`, `paymos://docs/cms-opencart`, `paymos://docs/cms-shopware6`, `paymos://docs/cms-cscart`, `paymos://docs/cms-easy-digital-downloads`, `paymos://docs/cms-drupal-commerce`, `paymos://docs/cms-hikashop`, `paymos://docs/cms-givewp`, `paymos://docs/cms-odoo`
+- Official CMS plugins (`15`): `paymos://docs/cms-woocommerce`, `paymos://docs/cms-whmcs`, `paymos://docs/cms-prestashop`, `paymos://docs/cms-magento2`, `paymos://docs/cms-opencart`, `paymos://docs/cms-shopware6`, `paymos://docs/cms-cscart`, `paymos://docs/cms-easy-digital-downloads`, `paymos://docs/cms-drupal-commerce`, `paymos://docs/cms-hikashop`, `paymos://docs/cms-givewp`, `paymos://docs/cms-odoo`, `paymos://docs/cms-blesta`, `paymos://docs/cms-fossbilling`, `paymos://docs/cms-paymenter`
 
 In `--sandbox` mode, five documentation pages (`DOC_RESOURCES`) remain available inside the MCP session:
 
@@ -347,7 +353,7 @@ Paymos supports **5 assets** — four stablecoins (**USDT, USDC, USD1, DAI**) an
 No. Merchant MCP enforces the authenticated user's exact Paymos role (`Owner`, `Admin`, `Finance`, `Developer`, `Custom`). Sensitive Production actions return `user_action_required` with a dashboard `continue_url` for explicit human step-up confirmation, and the withdrawal address whitelist is enabled by default and managed in the dashboard.
 
 ### What is the difference between 188 remote tools and 191 CLI tools?
-Direct remote HTTP connections (`https://app.paymos.io/connect/merchant-mcp`) expose **188** server workspace and Sandbox tools (`162` `merchant_*`, `25` `playground_*`, and `get_connection_status`). Running the local `@paymos/mcp connect` stdio wrapper adds **3** zero-network offline helpers (`paymos_auth_status`, `recommend_payment_integration`, `verify_webhook_signature`) plus `27` compiled `paymos://docs/*` pages, for **191** tools total.
+Direct remote HTTP connections (`https://app.paymos.io/connect/merchant-mcp`) expose **188** server workspace and Sandbox tools (`162` `merchant_*`, `25` `playground_*`, and `get_connection_status`). Running the local `@paymos/mcp connect` stdio wrapper adds **3** zero-network offline helpers (`paymos_auth_status`, `recommend_payment_integration`, `verify_webhook_signature`) plus `30` compiled `paymos://docs/*` pages, for **191** tools total.
 
 Full documentation: [Paymos MCP & AI Agents Guide](https://paymos.io/docs/mcp) · [AI Agents Product Page](https://paymos.io/product/ai-agents)
 

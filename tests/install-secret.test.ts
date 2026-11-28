@@ -240,6 +240,47 @@ describe("paymos install-secret", process.platform === "win32" ? { timeout: 15_0
     expect(existsSync(f.file)).toBe(false);
   });
 
+  it("redeems on the stand named by --origin or PAYMOS_MCP_ORIGIN and keeps the proof bound to that origin", async () => {
+    const stand = "https://dev-local.paymos.io";
+    const standEndpoint = stand + "/connect/merchant-mcp/tickets/secret/redeem";
+    const f = fixture();
+    await runInstallSecret(["--prepare", "--file", envFile, "--merchant-id", merchant,
+      "--environment", "sandbox", "--operation-id", operation, "--origin", stand], f.runtime);
+    const descriptor = JSON.parse(f.stdout.at(-1)!) as Challenge;
+    const statePath = join(f.stateDir, descriptor.request_id + ".json");
+    expect(JSON.parse(readFileSync(statePath, "utf8"))).toMatchObject({ origin: stand });
+
+    // A redeem aimed at production does not spend the stand's proof.
+    await expect(redeem(f, descriptor)).rejects.toThrow(/^delivery_state_unavailable:/);
+    expect(existsSync(statePath)).toBe(true);
+    expect(f.fetch).not.toHaveBeenCalled();
+
+    f.fetch.mockImplementationOnce(async url => {
+      expect(url).toBe(standEndpoint);
+      return secretResponse(descriptor);
+    });
+    await runInstallSecret(["--token", ticket, "--request-id", descriptor.request_id, "--file", envFile,
+      "--origin", stand], f.runtime);
+    expect(f.stdout.at(-1)).toBe('{"status":"installed"}');
+
+    // The same stand can come from the environment, like `connect --origin`.
+    const fromEnv = fixture();
+    const envRuntime: DeliveryRuntime = { ...fromEnv.runtime, env: { PAYMOS_MCP_ORIGIN: stand } };
+    await runInstallSecret(["--prepare", "--file", envFile, "--merchant-id", merchant,
+      "--environment", "sandbox", "--operation-id", operation], envRuntime);
+    const envDescriptor = JSON.parse(fromEnv.stdout.at(-1)!) as Challenge;
+    fromEnv.fetch.mockImplementationOnce(async url => {
+      expect(url).toBe(standEndpoint);
+      return secretResponse(envDescriptor);
+    });
+    await runInstallSecret(["--token", ticket, "--request-id", envDescriptor.request_id, "--file", envFile], envRuntime);
+    expect(fromEnv.stdout.at(-1)).toBe('{"status":"installed"}');
+
+    await expect(runInstallSecret(["--prepare", "--file", envFile, "--merchant-id", merchant,
+      "--environment", "sandbox", "--operation-id", operation, "--origin", "http://evil.paymos.io"], f.runtime))
+      .rejects.toThrow(/^delivery_arguments:/);
+  });
+
   it("validates the local target before the request and leaves a good preparation usable", async () => {
     const f = fixture();
     const request = await prepare(f);
